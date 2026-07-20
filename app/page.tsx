@@ -68,6 +68,23 @@ type ProtocolItem = {
   targetY: number;
 };
 
+const KOREAN_TTS_LANGUAGE = "ko-KR";
+
+function findKoreanVoice(voices: SpeechSynthesisVoice[]) {
+  const exactLanguage = KOREAN_TTS_LANGUAGE.toLowerCase();
+
+  return (
+    voices.find(
+      (voice) => voice.lang.replace("_", "-").toLowerCase() === exactLanguage,
+    ) ??
+    voices.find((voice) => {
+      const language = voice.lang.replace("_", "-").toLowerCase();
+      return language === "ko" || language.startsWith("ko-");
+    }) ??
+    null
+  );
+}
+
 const protocol: ProtocolItem[] = [
   {
     id: 1,
@@ -702,6 +719,7 @@ function AppFooter() {
         화면의 타점과 횟수는 <strong>UI 체험용 예시</strong>이며 의료 안내가 아닙니다.
         아프거나 어지러우면 바로 멈추세요.
       </p>
+      <a href="/principle">톡톡 원리 알아보기 →</a>
     </footer>
   );
 }
@@ -744,6 +762,7 @@ export default function Home() {
   const sensorSourceRef = useRef<SensorSource>(null);
   const genericSensorRef = useRef<GenericMotionSensor | null>(null);
   const ignoreMotionUntilRef = useRef(0);
+  const koreanVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const currentTarget = protocol[targetIndex];
   const activeMotionConfig = useMemo(
@@ -804,20 +823,23 @@ export default function Home() {
         setSpeechMessage("이 브라우저에서는 음성 안내를 사용할 수 없어요.");
         return;
       }
-      window.speechSynthesis.cancel();
+      const speechSynthesis = window.speechSynthesis;
+      speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(message);
-      utterance.lang = "ko-KR";
+      utterance.lang = KOREAN_TTS_LANGUAGE;
       utterance.rate = 0.82;
       utterance.pitch = 1;
-      const koreanVoice = window.speechSynthesis
-        .getVoices()
-        .find((voice) => voice.lang.toLowerCase().startsWith("ko"));
-      if (koreanVoice) utterance.voice = koreanVoice;
+      const koreanVoice =
+        koreanVoiceRef.current ?? findKoreanVoice(speechSynthesis.getVoices());
+      if (koreanVoice) {
+        koreanVoiceRef.current = koreanVoice;
+        utterance.voice = koreanVoice;
+      }
       utterance.onstart = () => setSpeechMessage("설명을 읽고 있어요.");
       utterance.onend = () => setSpeechMessage("");
       utterance.onerror = () =>
         setSpeechMessage("음성 안내를 재생하지 못했어요. 화면의 글을 확인해 주세요.");
-      window.speechSynthesis.speak(utterance);
+      speechSynthesis.speak(utterance);
     },
     [instruction],
   );
@@ -1148,6 +1170,22 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+
+    const speechSynthesis = window.speechSynthesis;
+    const loadKoreanVoice = () => {
+      koreanVoiceRef.current = findKoreanVoice(speechSynthesis.getVoices());
+    };
+
+    loadKoreanVoice();
+    speechSynthesis.addEventListener("voiceschanged", loadKoreanVoice);
+
+    return () => {
+      speechSynthesis.removeEventListener("voiceschanged", loadKoreanVoice);
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       stopCamera();
       window.speechSynthesis?.cancel();
@@ -1416,6 +1454,10 @@ export default function Home() {
             통증이 심하거나 어지러우면 연습을 시작하지 마세요.
           </p>
         </div>
+        <a className="principle-entry-link" href="/principle">
+          왜 반대쪽 팔을 톡톡할까요? 원리부터 알아보기
+          <span aria-hidden="true">→</span>
+        </a>
       </section>
 
       <section className="welcome__visual" aria-label="톡톡 연습 안내 그림">

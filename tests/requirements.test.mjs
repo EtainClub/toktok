@@ -4,6 +4,10 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const principlePage = await readFile(
+  new URL("../app/principle/page.tsx", import.meta.url),
+  "utf8",
+);
 
 test("the complete senior-friendly flow is represented", () => {
   for (const screen of [
@@ -51,12 +55,27 @@ test("the experience exposes explicit pause, repeat, and next actions", () => {
   assert.match(page, /자동으로 넘어가지 않아요/);
 });
 
-test("speech, large text, focus, motion, and large tap targets are supported", () => {
+test("Korean speech, large text, focus, motion, and large tap targets are supported", () => {
   assert.match(page, /SpeechSynthesisUtterance/);
+  assert.match(page, /const KOREAN_TTS_LANGUAGE = "ko-KR"/);
+  assert.match(page, /utterance\.lang = KOREAN_TTS_LANGUAGE/);
+  assert.match(page, /findKoreanVoice/);
+  assert.match(page, /addEventListener\("voiceschanged"/);
   assert.match(page, /글자를 더 크게 보기/);
   assert.match(css, /focus-visible/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /min-height: 66px/);
+});
+
+test("the BRT principle page is easy to find, understand, and use safely", () => {
+  assert.match(page, /href="\/principle"/);
+  assert.match(principlePage, /자극 → 신호 → 반응/);
+  assert.match(principlePage, /불편한 쪽과 반대쪽 팔을 안내해요/);
+  assert.match(principlePage, /아프지 않게 일정한 리듬으로 두드리는 것/);
+  assert.match(principlePage, /몸이나 뇌를 실제로 초기화한다는 뜻은 아니에요/);
+  assert.match(principlePage, /의료 치료를 대신하지 않아요/);
+  assert.match(principlePage, /현재 받고 있는 치료나 약을 임의로 중단하지 마세요/);
+  assert.match(css, /\.principle-card-grid/);
 });
 
 test("a named detection seam remains available for a future vision model", () => {
