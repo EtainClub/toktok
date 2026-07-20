@@ -1298,6 +1298,37 @@ h2 {
   font-size: 12px;
 }
 
+.sensor-diagnostics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sensor-diagnostics > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #d2d9d6;
+  border-radius: 999px;
+  background: #f6f7f5;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sensor-diagnostics > span.is-ok {
+  border-color: #acd4c3;
+  background: #edf9f3;
+  color: #176749;
+}
+
+.sensor-diagnostics > span.is-waiting b {
+  color: var(--orange);
+}
+
 .sensor-ready-mark {
   width: 90px;
   height: 90px;
@@ -1315,7 +1346,7 @@ h2 {
 
 .sensor-ready-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 28px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1347,12 +1378,17 @@ h2 {
 .sensor-error-help {
   margin-top: 24px;
   padding: 15px;
+  padding-left: 37px;
   border-left: 5px solid var(--orange);
   border-radius: 9px;
   background: #fff4e0;
   color: #684a2f;
   font-size: 14px;
   font-weight: 700;
+}
+
+.sensor-error-help li + li {
+  margin-top: 8px;
 }
 
 .camera-grid .screen-copy {
@@ -2768,6 +2804,15 @@ h2 {
   .calibration-count > span {
     min-height: 91px;
     font-size: 27px;
+  }
+
+  .sensor-ready-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .sensor-ready-summary > span + span {
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
   .camera-placeholder {

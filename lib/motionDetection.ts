@@ -33,16 +33,16 @@ export type MotionAnalysis = {
 };
 
 export const CALIBRATION_MOTION_CONFIG: MotionDetectorConfig = {
-  hitThreshold: 1.15,
-  jerkThreshold: 6.5,
+  hitThreshold: 0.55,
+  jerkThreshold: 3.2,
   cooldownMs: 340,
   gravitySmoothing: 0.9,
 };
 
 export const DEFAULT_MOTION_CONFIG: MotionDetectorConfig = {
-  hitThreshold: 1.4,
-  jerkThreshold: 7,
-  cooldownMs: 300,
+  hitThreshold: 0.8,
+  jerkThreshold: 4,
+  cooldownMs: 340,
   gravitySmoothing: 0.9,
 };
 
@@ -147,14 +147,15 @@ export function createCalibratedMotionConfig(
     usablePeaks.length % 2 === 0
       ? (usablePeaks[middle - 1] + usablePeaks[middle]) / 2
       : usablePeaks[middle];
-  // A real arm target can transmit a softer impulse than the phone-holding hand
-  // used during calibration, so use roughly half of the calibrated peak.
-  const hitThreshold = clamp(median * 0.48, 1.2, 7.5);
+  // A real arm target transmits a much softer impulse than tapping the hand
+  // used during calibration. Keep the threshold low, while jerk + cooldown
+  // reject slow posture changes and a single impact's after-shake.
+  const hitThreshold = clamp(median * 0.4, 0.5, 6.5);
 
   return {
     hitThreshold,
-    jerkThreshold: clamp(hitThreshold * 3.4, 7, 32),
-    cooldownMs: 300,
+    jerkThreshold: clamp(hitThreshold * 3.2, 3.2, 26),
+    cooldownMs: 340,
     gravitySmoothing: 0.9,
   };
 }

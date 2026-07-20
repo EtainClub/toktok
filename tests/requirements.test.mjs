@@ -4,6 +4,7 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const headers = await readFile(new URL("../public/_headers", import.meta.url), "utf8");
 
 test("the complete senior-friendly flow is represented", () => {
   for (const screen of [
@@ -26,10 +27,17 @@ test("camera and real motion-sensor paths are implemented", () => {
   assert.match(page, /DeviceMotionEvent/);
   assert.match(page, /requestPermission/);
   assert.match(page, /addEventListener\("devicemotion"/);
+  assert.match(page, /LinearAccelerationSensor/);
+  assert.match(page, /Accelerometer/);
+  assert.match(page, /5초 동안 가속도 값이 오지 않았어요/);
   assert.match(page, /analyzeMotionSample/);
   assert.match(page, /휴대폰 센서로 톡톡 감지하기/);
   assert.match(page, /폰을 쥔 손을 3번 톡톡해 주세요/);
   assert.match(page, /카메라를 열지 못했어요/);
+});
+
+test("the deployed page explicitly allows same-origin accelerometer access", () => {
+  assert.match(headers, /Permissions-Policy: accelerometer=\(self\)/);
 });
 
 test("target finding is separated from tapping", () => {

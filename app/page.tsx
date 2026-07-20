@@ -25,8 +25,28 @@ type Screen =
 type CameraStatus = "idle" | "requesting" | "ready" | "failed";
 type DetectionMode = "vision" | "motion" | "manual";
 type SensorStep = "intro" | "requesting" | "calibrating" | "ready" | "error";
+type SensorSource =
+  | "devicemotion"
+  | "linear-acceleration"
+  | "accelerometer"
+  | null;
 type DeviceMotionEventConstructorWithPermission = typeof DeviceMotionEvent & {
   requestPermission?: () => Promise<PermissionState>;
+};
+type GenericMotionSensor = EventTarget & {
+  x: number | null;
+  y: number | null;
+  z: number | null;
+  start: () => void;
+  stop: () => void;
+};
+type GenericMotionSensorConstructor = new (options?: {
+  frequency?: number;
+  referenceFrame?: "device" | "screen";
+}) => GenericMotionSensor;
+type WindowWithMotionSensors = Window & {
+  Accelerometer?: GenericMotionSensorConstructor;
+  LinearAccelerationSensor?: GenericMotionSensorConstructor;
 };
 
 type ProtocolItem = {
@@ -92,6 +112,13 @@ function sideName(side: ArmSide) {
 
 function painSideName(side: PainSide) {
   return side === "left" ? "왼쪽 어깨" : "오른쪽 어깨";
+}
+
+function sensorSourceName(source: SensorSource) {
+  if (source === "devicemotion") return "브라우저 동작 센서";
+  if (source === "linear-acceleration") return "선형 가속도 센서";
+  if (source === "accelerometer") return "가속도 센서";
+  return "센서 자동 선택";
 }
 
 function currentStage(screen: Screen) {
@@ -604,6 +631,7 @@ export default function Home() {
   const [sensorSignalLevel, setSensorSignalLevel] = useState(0);
   const [sensorHasSignal, setSensorHasSignal] = useState(false);
   const [sensorMessage, setSensorMessage] = useState("");
+  const [sensorSource, setSensorSource] = useState<SensorSource>(null);
   const [sensorConfig, setSensorConfig] =
     useState<MotionDetectorConfig>(DEFAULT_MOTION_CONFIG);
   const [targetIndex, setTargetIndex] = useState(0);
@@ -623,6 +651,9 @@ export default function Home() {
   const calibrationPeaksRef = useRef<number[]>([]);
   const lastSignalPaintRef = useRef(0);
   const signalDecayTimerRef = useRef<number | null>(null);
+  const sensorHasSignalRef = useRef(false);
+  const sensorSourceRef = useRef<SensorSource>(null);
+  const genericSensorRef = useRef<GenericMotionSensor | null>(null);
 
   const currentTarget = protocol[targetIndex];
 
@@ -786,38 +817,46 @@ export default function Home() {
       (sensorStep === "calibrating" || sensorStep === "ready");
     if (!sensorIsListening) return;
 
-    const handleDeviceMotion = (event: DeviceMotionEvent) => {
+    let disposed = false;
+    let fallbackTimer: number | null = null;
+    let noSignalTimer: number | null = null;
+    const genericWindow = window as WindowWithMotionSensors;
+
+    const handleMotionSample = (
+      sample: Parameters<typeof analyzeMotionSample>[1],
+      source: Exclude<SensorSource, null>,
+    ) => {
+      if (
+        disposed ||
+        (sensorSourceRef.current !== null &&
+          sensorSourceRef.current !== source)
+      ) {
+        return;
+      }
+
       const activeConfig =
         sensorStep === "calibrating" ? CALIBRATION_MOTION_CONFIG : sensorConfig;
       const analysis = analyzeMotionSample(
         motionStateRef.current,
-        {
-          acceleration: event.acceleration
-            ? {
-                x: event.acceleration.x,
-                y: event.acceleration.y,
-                z: event.acceleration.z,
-              }
-            : null,
-          accelerationIncludingGravity: event.accelerationIncludingGravity
-            ? {
-                x: event.accelerationIncludingGravity.x,
-                y: event.accelerationIncludingGravity.y,
-                z: event.accelerationIncludingGravity.z,
-              }
-            : null,
-          timestamp: event.timeStamp || performance.now(),
-        },
+        sample,
         activeConfig,
       );
       motionStateRef.current = analysis.state;
 
       if (analysis.source === "unavailable") {
-        setSensorMessage("센서 값이 비어 있어요. 다른 브라우저에서 다시 시도해 주세요.");
         return;
       }
 
-      setSensorHasSignal(true);
+      if (!sensorHasSignalRef.current) {
+        sensorHasSignalRef.current = true;
+        sensorSourceRef.current = source;
+        setSensorHasSignal(true);
+        setSensorSource(source);
+        setSensorMessage(
+          `${sensorSourceName(source)} 값을 받고 있어요. 평소 세기로 톡톡해 주세요.`,
+        );
+      }
+
       const now = performance.now();
       if (now - lastSignalPaintRef.current >= 70) {
         lastSignalPaintRef.current = now;
@@ -861,8 +900,107 @@ export default function Home() {
       }
     };
 
+    const handleDeviceMotion = (event: DeviceMotionEvent) => {
+      handleMotionSample(
+        {
+          acceleration: event.acceleration
+            ? {
+                x: event.acceleration.x,
+                y: event.acceleration.y,
+                z: event.acceleration.z,
+              }
+            : null,
+          accelerationIncludingGravity: event.accelerationIncludingGravity
+            ? {
+                x: event.accelerationIncludingGravity.x,
+                y: event.accelerationIncludingGravity.y,
+                z: event.accelerationIncludingGravity.z,
+              }
+            : null,
+          timestamp: event.timeStamp || performance.now(),
+        },
+        "devicemotion",
+      );
+    };
+
+    const startGenericSensor = () => {
+      if (
+        disposed ||
+        genericSensorRef.current ||
+        (sensorSourceRef.current !== null &&
+          sensorSourceRef.current !== "linear-acceleration" &&
+          sensorSourceRef.current !== "accelerometer")
+      ) {
+        return;
+      }
+
+      const GenericSensorConstructor =
+        genericWindow.LinearAccelerationSensor || genericWindow.Accelerometer;
+      if (!GenericSensorConstructor) return;
+      const source: Exclude<SensorSource, null> =
+        genericWindow.LinearAccelerationSensor
+          ? "linear-acceleration"
+          : "accelerometer";
+
+      try {
+        const sensor = new GenericSensorConstructor({
+          frequency: 60,
+          referenceFrame: "device",
+        });
+        genericSensorRef.current = sensor;
+        sensor.addEventListener("reading", () => {
+          const vector = { x: sensor.x, y: sensor.y, z: sensor.z };
+          handleMotionSample(
+            {
+              acceleration: source === "linear-acceleration" ? vector : null,
+              accelerationIncludingGravity:
+                source === "accelerometer" ? vector : null,
+              timestamp: performance.now(),
+            },
+            source,
+          );
+        });
+        sensor.addEventListener("error", () => {
+          if (!sensorHasSignalRef.current) {
+            setSensorMessage(
+              "가속도 센서 접근이 차단됐어요. 휴대폰의 Safari 또는 Chrome에서 직접 열어 주세요.",
+            );
+          }
+        });
+        sensor.start();
+      } catch {
+        genericSensorRef.current = null;
+      }
+    };
+
     window.addEventListener("devicemotion", handleDeviceMotion);
-    return () => window.removeEventListener("devicemotion", handleDeviceMotion);
+
+    if (
+      sensorSourceRef.current === "linear-acceleration" ||
+      sensorSourceRef.current === "accelerometer" ||
+      !("DeviceMotionEvent" in window)
+    ) {
+      startGenericSensor();
+    } else {
+      fallbackTimer = window.setTimeout(startGenericSensor, 1600);
+    }
+
+    noSignalTimer = window.setTimeout(() => {
+      if (disposed || sensorHasSignalRef.current) return;
+      setSensorStep("error");
+      setSensorMessage(
+        "5초 동안 가속도 값이 오지 않았어요. 메신저 안의 브라우저를 닫고 Safari 또는 Chrome에서 이 주소를 직접 열어 주세요.",
+      );
+    }, 5000);
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("devicemotion", handleDeviceMotion);
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+      if (noSignalTimer !== null) window.clearTimeout(noSignalTimer);
+      genericSensorRef.current?.stop();
+      genericSensorRef.current = null;
+    };
   }, [
     detectionMode,
     isRunning,
@@ -893,6 +1031,9 @@ export default function Home() {
     setSensorCalibrationCount(0);
     setSensorSignalLevel(0);
     setSensorHasSignal(false);
+    sensorHasSignalRef.current = false;
+    setSensorSource(null);
+    sensorSourceRef.current = null;
     setSensorMessage("");
     setSensorConfig(DEFAULT_MOTION_CONFIG);
     motionStateRef.current = createMotionDetectorState();
@@ -935,6 +1076,9 @@ export default function Home() {
     setSensorCalibrationCount(0);
     setSensorSignalLevel(0);
     setSensorHasSignal(false);
+    sensorHasSignalRef.current = false;
+    setSensorSource(null);
+    sensorSourceRef.current = null;
     setSensorMessage("");
     setSensorConfig(DEFAULT_MOTION_CONFIG);
     motionStateRef.current = createMotionDetectorState();
@@ -953,18 +1097,27 @@ export default function Home() {
       return;
     }
 
-    if (!("DeviceMotionEvent" in window)) {
+    const motionWindow = window as WindowWithMotionSensors;
+    const hasDeviceMotion = "DeviceMotionEvent" in window;
+    const hasGenericMotionSensor =
+      Boolean(motionWindow.LinearAccelerationSensor) ||
+      Boolean(motionWindow.Accelerometer);
+
+    if (!hasDeviceMotion && !hasGenericMotionSensor) {
       setSensorStep("error");
       setSensorMessage("이 기기나 브라우저에는 움직임 센서 기능이 없어요.");
       return;
     }
 
     try {
-      const MotionEventConstructor =
-        window.DeviceMotionEvent as DeviceMotionEventConstructorWithPermission;
-      const permission = MotionEventConstructor.requestPermission
-        ? await MotionEventConstructor.requestPermission()
-        : "granted";
+      let permission: PermissionState = "granted";
+      if (hasDeviceMotion) {
+        const MotionEventConstructor =
+          window.DeviceMotionEvent as DeviceMotionEventConstructorWithPermission;
+        permission = MotionEventConstructor.requestPermission
+          ? await MotionEventConstructor.requestPermission()
+          : "granted";
+      }
 
       if (permission !== "granted") {
         setSensorStep("error");
@@ -979,8 +1132,13 @@ export default function Home() {
       setSensorCalibrationCount(0);
       setSensorSignalLevel(0);
       setSensorHasSignal(false);
+      sensorHasSignalRef.current = false;
+      setSensorSource(null);
+      sensorSourceRef.current = null;
       setSensorConfig(DEFAULT_MOTION_CONFIG);
-      setSensorMessage("센서가 연결됐어요. 이제 세 번 가볍게 톡톡해 주세요.");
+      setSensorMessage(
+        "권한을 확인했어요. 센서 값이 들어오는지 최대 5초 동안 확인합니다.",
+      );
       setSensorStep("calibrating");
     } catch {
       setSensorStep("error");
@@ -996,7 +1154,10 @@ export default function Home() {
     setSensorCalibrationCount(0);
     setSensorSignalLevel(0);
     setSensorHasSignal(false);
-    setSensorMessage("다시 세 번 가볍게 톡톡해 주세요.");
+    sensorHasSignalRef.current = false;
+    setSensorSource(null);
+    sensorSourceRef.current = null;
+    setSensorMessage("센서 값을 다시 확인하고 있어요. 잠시만 기다려 주세요.");
     setSensorStep("calibrating");
   };
 
@@ -1050,6 +1211,9 @@ export default function Home() {
     setSensorCalibrationCount(0);
     setSensorSignalLevel(0);
     setSensorHasSignal(false);
+    sensorHasSignalRef.current = false;
+    setSensorSource(null);
+    sensorSourceRef.current = null;
     setSensorMessage("");
     setSensorConfig(DEFAULT_MOTION_CONFIG);
     motionStateRef.current = createMotionDetectorState();
@@ -1407,9 +1571,23 @@ export default function Home() {
                   </strong>
                   <small>
                     {sensorMessage ||
-                      "화면이 켜진 채로 휴대폰을 손에 쥐고 톡톡해 주세요."}
+                      "센서 값이 들어오는지 최대 5초 동안 확인하고 있어요."}
                   </small>
                 </p>
+              </div>
+              <div className="sensor-diagnostics" aria-label="센서 연결 상태">
+                <span className="is-ok">
+                  <b>✓</b>
+                  HTTPS 보안 연결
+                </span>
+                <span className={sensorHasSignal ? "is-ok" : "is-waiting"}>
+                  <b>{sensorHasSignal ? "✓" : "…"}</b>
+                  {sensorHasSignal ? "가속도 값 수신" : "가속도 값 확인 중"}
+                </span>
+                <span className={sensorSource ? "is-ok" : "is-waiting"}>
+                  <b>{sensorSource ? "✓" : "…"}</b>
+                  {sensorSourceName(sensorSource)}
+                </span>
               </div>
               <button
                 type="button"
@@ -1443,6 +1621,10 @@ export default function Home() {
                   <small>휴대폰을 쥔 손</small>
                   <strong>{sideName(workingArm)}</strong>
                 </span>
+                <span>
+                  <small>감지 방식</small>
+                  <strong>{sensorSourceName(sensorSource)}</strong>
+                </span>
               </div>
               <div className="button-stack">
                 <button
@@ -1471,10 +1653,11 @@ export default function Home() {
               <p className="lead" role="alert">
                 {sensorMessage}
               </p>
-              <div className="sensor-error-help">
-                휴대폰의 Safari 또는 Chrome에서 HTTPS 주소로 열고, 움직임 센서
-                권한을 허용했는지 확인해 주세요.
-              </div>
+              <ol className="sensor-error-help">
+                <li>카카오톡·문자 앱 안에서 열었다면 메뉴에서 ‘Safari로 열기’ 또는 ‘Chrome으로 열기’를 선택해 주세요.</li>
+                <li>센서 시작 버튼을 다시 누르고 움직임 권한 창에서 ‘허용’을 선택해 주세요.</li>
+                <li>그래도 안 되면 화면 회전이 되는지 확인해 기기 센서 자체를 점검해 주세요.</li>
+              </ol>
               <div className="button-stack">
                 <button
                   type="button"

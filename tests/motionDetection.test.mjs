@@ -32,6 +32,27 @@ test("a sharp linear acceleration is counted once", () => {
   assert.ok(result.magnitude > 2.8);
 });
 
+test("a soft phone impulse is still detectable during calibration", () => {
+  let state = createMotionDetectorState();
+  state = analyzeMotionSample(
+    state,
+    { acceleration: empty, accelerationIncludingGravity: null, timestamp: 0 },
+    CALIBRATION_MOTION_CONFIG,
+  ).state;
+
+  const result = analyzeMotionSample(
+    state,
+    {
+      acceleration: { x: 0.62, y: 0.08, z: 0.05 },
+      accelerationIncludingGravity: null,
+      timestamp: 40,
+    },
+    CALIBRATION_MOTION_CONFIG,
+  );
+
+  assert.equal(result.hit, true);
+});
+
 test("cooldown prevents a single impact from being counted twice", () => {
   let state = createMotionDetectorState();
   for (const [timestamp, x] of [
@@ -105,9 +126,9 @@ test("gravity-inclusive readings are high-pass filtered", () => {
 
 test("calibration adapts the hit threshold and keeps safe bounds", () => {
   const ordinary = createCalibratedMotionConfig([2.5, 3, 3.5]);
-  assert.equal(ordinary.hitThreshold, 1.44);
-  assert.ok(ordinary.jerkThreshold >= 7);
+  assert.ok(Math.abs(ordinary.hitThreshold - 1.2) < Number.EPSILON * 2);
+  assert.ok(ordinary.jerkThreshold >= 3.2);
 
-  assert.equal(createCalibratedMotionConfig([0.2, 0.3, 0.4]).hitThreshold, 1.2);
-  assert.equal(createCalibratedMotionConfig([30, 32, 34]).hitThreshold, 7.5);
+  assert.equal(createCalibratedMotionConfig([0.2, 0.3, 0.4]).hitThreshold, 0.5);
+  assert.equal(createCalibratedMotionConfig([30, 32, 34]).hitThreshold, 6.5);
 });
