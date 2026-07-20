@@ -4,7 +4,7 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const headers = await readFile(new URL("../public/_headers", import.meta.url), "utf8");
+const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
 
 test("the complete senior-friendly flow is represented", () => {
   for (const screen of [
@@ -37,7 +37,8 @@ test("camera and real motion-sensor paths are implemented", () => {
 });
 
 test("the deployed page explicitly allows same-origin accelerometer access", () => {
-  assert.match(headers, /Permissions-Policy: accelerometer=\(self\)/);
+  assert.match(worker, /"Permissions-Policy"/);
+  assert.match(worker, /accelerometer=\(self\), gyroscope=\(self\)/);
 });
 
 test("target finding is separated from tapping", () => {
