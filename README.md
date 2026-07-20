@@ -11,8 +11,9 @@ npm run dev
 
 브라우저에서 `http://localhost:3000`을 엽니다.
 
-`npm run build`는 vinext를 사용해 `dist/server/index.js`와 브라우저 자산을
-만들고, 배포용 사이트 메타데이터까지 `dist/` 안에 자동으로 준비합니다.
+`npm run build`는 Cloudflare 플랫폼용 vinext를 사용해 `dist/server/index.js`와
+정적 브라우저 자산을 만들고, 배포용 사이트 메타데이터까지 `dist/` 안에
+자동으로 준비합니다.
 
 ## 구현된 흐름
 
