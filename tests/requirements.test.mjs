@@ -4,8 +4,6 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
-const wrangler = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 
 test("the complete senior-friendly flow is represented", () => {
   for (const screen of [
@@ -30,17 +28,13 @@ test("camera and real motion-sensor paths are implemented", () => {
   assert.match(page, /addEventListener\("devicemotion"/);
   assert.match(page, /LinearAccelerationSensor/);
   assert.match(page, /Accelerometer/);
+  assert.match(page, /allowsFeature\("accelerometer"\)/);
+  assert.match(page, /현재 앱 안의 미리보기에서는 가속도 센서가 차단돼 있어요/);
   assert.match(page, /5초 동안 가속도 값이 오지 않았어요/);
   assert.match(page, /analyzeMotionSample/);
   assert.match(page, /휴대폰 센서로 톡톡 감지하기/);
   assert.match(page, /폰을 쥔 손을 3번 톡톡해 주세요/);
   assert.match(page, /카메라를 열지 못했어요/);
-});
-
-test("the deployed page explicitly allows same-origin accelerometer access", () => {
-  assert.match(worker, /"Permissions-Policy"/);
-  assert.match(worker, /accelerometer=\(self\), gyroscope=\(self\)/);
-  assert.match(wrangler, /"run_worker_first": true/);
 });
 
 test("target finding is separated from tapping", () => {

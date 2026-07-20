@@ -48,6 +48,13 @@ type WindowWithMotionSensors = Window & {
   Accelerometer?: GenericMotionSensorConstructor;
   LinearAccelerationSensor?: GenericMotionSensorConstructor;
 };
+type SensorPermissionsPolicy = {
+  allowsFeature: (feature: string) => boolean;
+};
+type DocumentWithSensorPolicy = Document & {
+  featurePolicy?: SensorPermissionsPolicy;
+  permissionsPolicy?: SensorPermissionsPolicy;
+};
 
 type ProtocolItem = {
   id: number;
@@ -1094,6 +1101,18 @@ export default function Home() {
     if (!window.isSecureContext) {
       setSensorStep("error");
       setSensorMessage("움직임 센서는 보안 연결(HTTPS)에서만 사용할 수 있어요.");
+      return;
+    }
+
+    const sensorPolicyDocument = document as DocumentWithSensorPolicy;
+    const sensorPolicy =
+      sensorPolicyDocument.permissionsPolicy ||
+      sensorPolicyDocument.featurePolicy;
+    if (sensorPolicy && !sensorPolicy.allowsFeature("accelerometer")) {
+      setSensorStep("error");
+      setSensorMessage(
+        "현재 앱 안의 미리보기에서는 가속도 센서가 차단돼 있어요. 이 페이지를 Safari 또는 Chrome에서 직접 열어 주세요.",
+      );
       return;
     }
 
