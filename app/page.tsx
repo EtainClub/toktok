@@ -1561,7 +1561,9 @@ export default function Home() {
             <div className="arm-confirmation">
               <span>{sideName(workingArm).slice(0, 1)}</span>
               <p>
-                <small>{painSide && painSideName(painSide)} 반대편</small>
+                <small>
+                  {painSide && painSideName(painSide, routine.subject)} 반대편
+                </small>
                 <strong>{sideName(workingArm)}을 안내할게요</strong>
               </p>
             </div>
