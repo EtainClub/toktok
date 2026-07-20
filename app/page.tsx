@@ -5,9 +5,11 @@ import {
   CALIBRATION_MOTION_CONFIG,
   DEFAULT_MOTION_CONFIG,
   analyzeMotionSample,
+  applyMotionSensitivity,
   createCalibratedMotionConfig,
   createMotionDetectorState,
   type MotionDetectorConfig,
+  type MotionSensitivity,
 } from "../lib/motionDetection";
 
 type PainSide = "left" | "right";
@@ -126,6 +128,76 @@ function sensorSourceName(source: SensorSource) {
   if (source === "linear-acceleration") return "선형 가속도 센서";
   if (source === "accelerometer") return "가속도 센서";
   return "센서 자동 선택";
+}
+
+const motionSensitivityOptions: Array<{
+  value: MotionSensitivity;
+  label: string;
+  description: string;
+  badge?: string;
+}> = [
+  {
+    value: "low",
+    label: "낮음",
+    description: "중복·오감지를 줄여요",
+  },
+  {
+    value: "normal",
+    label: "보통",
+    description: "대부분에게 알맞아요",
+    badge: "권장",
+  },
+  {
+    value: "high",
+    label: "높음",
+    description: "약한 톡톡도 감지해요",
+  },
+];
+
+function motionSensitivityName(sensitivity: MotionSensitivity) {
+  return motionSensitivityOptions.find((option) => option.value === sensitivity)!
+    .label;
+}
+
+function MotionSensitivityControl({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: MotionSensitivity;
+  onChange: (value: MotionSensitivity) => void;
+  compact?: boolean;
+}) {
+  return (
+    <fieldset
+      className={`sensitivity-control ${compact ? "sensitivity-control--compact" : ""}`}
+    >
+      <legend>센서 민감도</legend>
+      {!compact && (
+        <p>
+          한 번이 두 번으로 잡히거나 가만히 있어도 올라가면 <strong>낮음</strong>,
+          약한 톡톡이 잘 안 잡히면 <strong>높음</strong>을 선택하세요.
+        </p>
+      )}
+      <div className="sensitivity-options">
+        {motionSensitivityOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={value === option.value ? "is-selected" : ""}
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+          >
+            <span>
+              <strong>{option.label}</strong>
+              {option.badge && <em>{option.badge}</em>}
+            </span>
+            <small>{option.description}</small>
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
 
 function currentStage(screen: Screen) {
@@ -531,7 +603,7 @@ function ProgressHeader({
 
       <button className="help-button" type="button" onClick={onHelp}>
         <Icon name="help" size={25} />
-        <span>도움말</span>
+        <span>도움말·설정</span>
       </button>
     </header>
   );
@@ -543,6 +615,8 @@ function HelpPanel({
   onSpeak,
   largeText,
   onToggleText,
+  motionSensitivity,
+  onMotionSensitivityChange,
   onHome,
 }: {
   open: boolean;
@@ -550,6 +624,8 @@ function HelpPanel({
   onSpeak: () => void;
   largeText: boolean;
   onToggleText: () => void;
+  motionSensitivity: MotionSensitivity;
+  onMotionSensitivityChange: (value: MotionSensitivity) => void;
   onHome: () => void;
 }) {
   useEffect(() => {
@@ -575,12 +651,16 @@ function HelpPanel({
         <div className="help-panel__header">
           <div>
             <p className="eyebrow">언제든 같은 자리에서</p>
-            <h2 id="help-title">무엇을 도와드릴까요?</h2>
+            <h2 id="help-title">도움말과 설정</h2>
           </div>
           <button className="close-button" type="button" onClick={onClose}>
-            도움말 닫기
+            닫기
           </button>
         </div>
+        <MotionSensitivityControl
+          value={motionSensitivity}
+          onChange={onMotionSensitivityChange}
+        />
         <div className="help-actions">
           <button type="button" onClick={onSpeak}>
             <Icon name="sound" />
@@ -641,6 +721,8 @@ export default function Home() {
   const [sensorSource, setSensorSource] = useState<SensorSource>(null);
   const [sensorConfig, setSensorConfig] =
     useState<MotionDetectorConfig>(DEFAULT_MOTION_CONFIG);
+  const [motionSensitivity, setMotionSensitivity] =
+    useState<MotionSensitivity>("normal");
   const [targetIndex, setTargetIndex] = useState(0);
   const [count, setCount] = useState(0);
   const [countdown, setCountdown] = useState(3);
@@ -661,8 +743,13 @@ export default function Home() {
   const sensorHasSignalRef = useRef(false);
   const sensorSourceRef = useRef<SensorSource>(null);
   const genericSensorRef = useRef<GenericMotionSensor | null>(null);
+  const ignoreMotionUntilRef = useRef(0);
 
   const currentTarget = protocol[targetIndex];
+  const activeMotionConfig = useMemo(
+    () => applyMotionSensitivity(sensorConfig, motionSensitivity),
+    [motionSensitivity, sensorConfig],
+  );
 
   const instruction = useMemo(() => {
     if (screen === "welcome")
@@ -771,6 +858,41 @@ export default function Home() {
     });
   }, [currentTarget.count, playBeat]);
 
+  const changeMotionSensitivity = useCallback(
+    (nextSensitivity: MotionSensitivity) => {
+      setMotionSensitivity(nextSensitivity);
+      motionStateRef.current = createMotionDetectorState();
+      ignoreMotionUntilRef.current = performance.now() + 900;
+      try {
+        window.localStorage.setItem(
+          "toktok-motion-sensitivity",
+          nextSensitivity,
+        );
+      } catch {
+        // The selected value still applies for this session.
+      }
+
+      if (detectionMode === "motion") {
+        setSensorMessage(
+          `센서 민감도를 ${motionSensitivityName(nextSensitivity)}으로 바꿨어요.`,
+        );
+        if (screen === "exercise") setIsRunning(false);
+      }
+    },
+    [detectionMode, screen],
+  );
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("toktok-motion-sensitivity");
+      if (stored === "low" || stored === "normal" || stored === "high") {
+        setMotionSensitivity(stored);
+      }
+    } catch {
+      // Storage is optional; "normal" remains the safe default.
+    }
+  }, []);
+
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => setReducedMotion(query.matches);
@@ -842,7 +964,9 @@ export default function Home() {
       }
 
       const activeConfig =
-        sensorStep === "calibrating" ? CALIBRATION_MOTION_CONFIG : sensorConfig;
+        sensorStep === "calibrating"
+          ? CALIBRATION_MOTION_CONFIG
+          : activeMotionConfig;
       const analysis = analyzeMotionSample(
         motionStateRef.current,
         sample,
@@ -881,7 +1005,12 @@ export default function Home() {
         );
       }
 
-      if (!analysis.hit) return;
+      if (
+        !analysis.hit ||
+        performance.now() < ignoreMotionUntilRef.current
+      ) {
+        return;
+      }
 
       if (sensorStep === "calibrating") {
         if (calibrationPeaksRef.current.length >= 3) return;
@@ -1014,7 +1143,7 @@ export default function Home() {
     playBeat,
     registerDetectedHit,
     screen,
-    sensorConfig,
+    activeMotionConfig,
     sensorStep,
   ]);
 
@@ -1644,7 +1773,15 @@ export default function Home() {
                   <small>감지 방식</small>
                   <strong>{sensorSourceName(sensorSource)}</strong>
                 </span>
+                <span>
+                  <small>센서 민감도</small>
+                  <strong>{motionSensitivityName(motionSensitivity)}</strong>
+                </span>
               </div>
+              <MotionSensitivityControl
+                value={motionSensitivity}
+                onChange={changeMotionSensitivity}
+              />
               <div className="button-stack">
                 <button
                   type="button"
@@ -1861,16 +1998,23 @@ export default function Home() {
               <span style={{ width: `${progress}%` }} />
             </div>
             {detectionMode === "motion" && (
-              <div className="exercise-sensor-meter">
-                <div>
-                  <span>휴대폰 센서 반응</span>
-                  <strong>{sensorHasSignal ? "실시간 감지 중" : "신호 기다리는 중"}</strong>
+              <>
+                <div className="exercise-sensor-meter">
+                  <div>
+                    <span>휴대폰 센서 반응</span>
+                    <strong>{sensorHasSignal ? "실시간 감지 중" : "신호 기다리는 중"}</strong>
+                  </div>
+                  <i aria-label={`센서 반응 ${sensorSignalLevel}%`}>
+                    <b style={{ width: `${sensorSignalLevel}%` }} />
+                  </i>
+                  <small>휴대폰을 든 손 전체를 크게 흔들면 정확도가 떨어질 수 있어요.</small>
                 </div>
-                <i aria-label={`센서 반응 ${sensorSignalLevel}%`}>
-                  <b style={{ width: `${sensorSignalLevel}%` }} />
-                </i>
-                <small>휴대폰을 든 손 전체를 크게 흔들면 정확도가 떨어질 수 있어요.</small>
-              </div>
+                <MotionSensitivityControl
+                  value={motionSensitivity}
+                  onChange={changeMotionSensitivity}
+                  compact
+                />
+              </>
             )}
             <div className={`run-status ${isRunning ? "is-running" : "is-paused"}`}>
               <i aria-hidden="true" />
@@ -2032,6 +2176,9 @@ export default function Home() {
       className={`app-shell ${largeText ? "large-text" : ""} ${
         reducedMotion ? "reduced-motion" : ""
       }`}
+      onPointerDownCapture={() => {
+        ignoreMotionUntilRef.current = performance.now() + 650;
+      }}
     >
       <a className="skip-link" href="#main-content">본문으로 바로가기</a>
       <div id="main-content" tabIndex={-1}>
@@ -2053,6 +2200,8 @@ export default function Home() {
         onSpeak={() => speak()}
         largeText={largeText}
         onToggleText={() => setLargeText((previous) => !previous)}
+        motionSensitivity={motionSensitivity}
+        onMotionSensitivityChange={changeMotionSensitivity}
         onHome={resetApp}
       />
       <div className="sr-only" role="status" aria-live="polite">

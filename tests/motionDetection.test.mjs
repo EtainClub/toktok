@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CALIBRATION_MOTION_CONFIG,
   analyzeMotionSample,
+  applyMotionSensitivity,
   createCalibratedMotionConfig,
   createMotionDetectorState,
 } from "../lib/motionDetection.ts";
@@ -101,6 +102,34 @@ test("a later distinct impact is counted", () => {
   assert.equal(hits, 2);
 });
 
+test("one long-ringing impact cannot count again before the sensor settles", () => {
+  let state = createMotionDetectorState();
+  let hits = 0;
+  for (const [timestamp, x] of [
+    [0, 0],
+    [40, 3],
+    [120, 1.3],
+    [390, 1.2],
+    [740, 2.8],
+    [780, 0.1],
+    [820, 0.05],
+    [1180, 2.7],
+  ]) {
+    const result = analyzeMotionSample(
+      state,
+      {
+        acceleration: { x, y: 0, z: 0 },
+        accelerationIncludingGravity: null,
+        timestamp,
+      },
+      CALIBRATION_MOTION_CONFIG,
+    );
+    state = result.state;
+    if (result.hit) hits += 1;
+  }
+  assert.equal(hits, 2);
+});
+
 test("gravity-inclusive readings are high-pass filtered", () => {
   let state = createMotionDetectorState();
   let hits = 0;
@@ -131,4 +160,19 @@ test("calibration adapts the hit threshold and keeps safe bounds", () => {
 
   assert.equal(createCalibratedMotionConfig([0.2, 0.3, 0.4]).hitThreshold, 0.5);
   assert.equal(createCalibratedMotionConfig([30, 32, 34]).hitThreshold, 6.5);
+});
+
+test("sensitivity profiles trade weak-hit detection for false-positive resistance", () => {
+  const base = createCalibratedMotionConfig([2.5, 3, 3.5]);
+  const low = applyMotionSensitivity(base, "low");
+  const normal = applyMotionSensitivity(base, "normal");
+  const high = applyMotionSensitivity(base, "high");
+
+  assert.ok(low.hitThreshold > normal.hitThreshold);
+  assert.ok(normal.hitThreshold > high.hitThreshold);
+  assert.ok(low.jerkThreshold > normal.jerkThreshold);
+  assert.ok(normal.jerkThreshold > high.jerkThreshold);
+  assert.equal(low.cooldownMs, 720);
+  assert.equal(normal.cooldownMs, 520);
+  assert.equal(high.cooldownMs, 420);
 });

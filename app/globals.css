@@ -1329,6 +1329,106 @@ h2 {
   color: var(--orange);
 }
 
+.sensitivity-control {
+  min-width: 0;
+  margin: 22px 0 0;
+  padding: 16px;
+  border: 1px solid #bfd1ca;
+  border-radius: 16px;
+  background: #f8faf8;
+}
+
+.sensitivity-control legend {
+  padding: 0 7px;
+  color: var(--navy);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.sensitivity-control > p {
+  margin: 0 0 12px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.sensitivity-control > p strong {
+  color: var(--ink);
+}
+
+.sensitivity-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sensitivity-options button {
+  min-width: 0;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px;
+  border: 2px solid #c5d0cd;
+  border-radius: 13px;
+  background: #fff;
+  color: var(--navy);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sensitivity-options button:hover {
+  border-color: var(--teal);
+}
+
+.sensitivity-options button.is-selected {
+  border-color: var(--teal);
+  background: var(--mint);
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+
+.sensitivity-options button > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sensitivity-options strong {
+  font-size: 15px;
+}
+
+.sensitivity-options em {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.sensitivity-options small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.sensitivity-control--compact {
+  margin-top: 10px;
+  padding: 12px;
+  background: #fff;
+}
+
+.sensitivity-control--compact legend {
+  font-size: 13px;
+}
+
+.sensitivity-control--compact .sensitivity-options button {
+  min-height: 60px;
+  padding: 8px;
+}
+
 .sensor-ready-mark {
   width: 90px;
   height: 90px;
@@ -1346,7 +1446,7 @@ h2 {
 
 .sensor-ready-summary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   margin-top: 28px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1360,8 +1460,12 @@ h2 {
   padding: 17px;
 }
 
-.sensor-ready-summary > span + span {
+.sensor-ready-summary > span:nth-child(even) {
   border-left: 1px solid var(--line);
+}
+
+.sensor-ready-summary > span:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
 }
 
 .sensor-ready-summary small {
@@ -2356,6 +2460,10 @@ h2 {
   font-size: 31px;
 }
 
+.help-panel > .sensitivity-control {
+  margin-top: 22px;
+}
+
 .close-button {
   min-height: 50px;
   padding: 9px 13px;
@@ -2813,6 +2921,14 @@ h2 {
   .sensor-ready-summary > span + span {
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+
+  .sensitivity-control:not(.sensitivity-control--compact) .sensitivity-options {
+    grid-template-columns: 1fr;
+  }
+
+  .sensitivity-control:not(.sensitivity-control--compact) .sensitivity-options button {
+    min-height: 66px;
   }
 
   .camera-placeholder {

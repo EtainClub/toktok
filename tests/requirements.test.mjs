@@ -71,3 +71,15 @@ test("motion mode only counts a detected impact instead of an automatic timer", 
   );
   assert.match(page, /실제 톡톡 충격이 휴대폰에\s*전달될 때만 한 번씩 셉니다/);
 });
+
+test("motion sensitivity can be adjusted and remembered", () => {
+  assert.match(page, /type MotionSensitivity/);
+  assert.match(page, /센서 민감도/);
+  assert.match(page, /중복·오감지를 줄여요/);
+  assert.match(page, /약한 톡톡도 감지해요/);
+  assert.match(page, /toktok-motion-sensitivity/);
+  assert.match(page, /applyMotionSensitivity/);
+  assert.match(page, /onPointerDownCapture/);
+  assert.match(page, /setIsRunning\(false\)/);
+  assert.match(css, /\.sensitivity-options button\.is-selected/);
+});

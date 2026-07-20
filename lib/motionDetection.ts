@@ -17,11 +17,15 @@ export type MotionDetectorConfig = {
   gravitySmoothing: number;
 };
 
+export type MotionSensitivity = "low" | "normal" | "high";
+
 export type MotionDetectorState = {
   gravity: { x: number; y: number; z: number } | null;
   lastMagnitude: number;
   lastTimestamp: number | null;
   lastHitAt: number;
+  armed: boolean;
+  settledSamples: number;
 };
 
 export type MotionAnalysis = {
@@ -46,12 +50,52 @@ export const DEFAULT_MOTION_CONFIG: MotionDetectorConfig = {
   gravitySmoothing: 0.9,
 };
 
+const SENSITIVITY_PROFILES: Record<
+  MotionSensitivity,
+  {
+    thresholdMultiplier: number;
+    jerkMultiplier: number;
+    minimumCooldownMs: number;
+  }
+> = {
+  low: {
+    thresholdMultiplier: 1.55,
+    jerkMultiplier: 1.3,
+    minimumCooldownMs: 720,
+  },
+  normal: {
+    thresholdMultiplier: 1.18,
+    jerkMultiplier: 1.1,
+    minimumCooldownMs: 520,
+  },
+  high: {
+    thresholdMultiplier: 0.82,
+    jerkMultiplier: 0.9,
+    minimumCooldownMs: 420,
+  },
+};
+
+export function applyMotionSensitivity(
+  config: MotionDetectorConfig,
+  sensitivity: MotionSensitivity,
+): MotionDetectorConfig {
+  const profile = SENSITIVITY_PROFILES[sensitivity];
+  return {
+    hitThreshold: config.hitThreshold * profile.thresholdMultiplier,
+    jerkThreshold: config.jerkThreshold * profile.jerkMultiplier,
+    cooldownMs: Math.max(config.cooldownMs, profile.minimumCooldownMs),
+    gravitySmoothing: config.gravitySmoothing,
+  };
+}
+
 export function createMotionDetectorState(): MotionDetectorState {
   return {
     gravity: null,
     lastMagnitude: 0,
     lastTimestamp: null,
     lastHitAt: Number.NEGATIVE_INFINITY,
+    armed: true,
+    settledSamples: 0,
   };
 }
 
@@ -113,8 +157,14 @@ export function analyzeMotionSample(
       ? Math.abs(currentMagnitude - previous.lastMagnitude) / elapsedSeconds
       : 0;
   const outsideCooldown = sample.timestamp - previous.lastHitAt >= config.cooldownMs;
+  const settledSamples =
+    currentMagnitude <= config.hitThreshold * 0.45
+      ? Math.min(previous.settledSamples + 1, 2)
+      : 0;
+  const armed = previous.armed || settledSamples >= 2;
   const hit =
     source !== "unavailable" &&
+    armed &&
     currentMagnitude >= config.hitThreshold &&
     jerk >= config.jerkThreshold &&
     outsideCooldown;
@@ -125,6 +175,8 @@ export function analyzeMotionSample(
       lastMagnitude: currentMagnitude,
       lastTimestamp: sample.timestamp,
       lastHitAt: hit ? sample.timestamp : previous.lastHitAt,
+      armed: hit ? false : armed,
+      settledSamples: hit ? 0 : settledSamples,
     },
     magnitude: currentMagnitude,
     jerk,
