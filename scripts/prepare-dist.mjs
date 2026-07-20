@@ -1,11 +1,13 @@
-import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, stat } from "node:fs/promises";
 
-const source = new URL("../out/", import.meta.url);
-const destination = new URL("../dist/", import.meta.url);
+const serverEntry = new URL("../dist/server/index.js", import.meta.url);
+const sourceConfig = new URL("../.openai/hosting.json", import.meta.url);
+const configDirectory = new URL("../dist/.openai/", import.meta.url);
+const destinationConfig = new URL("../dist/.openai/hosting.json", import.meta.url);
 
-await stat(source);
-await rm(destination, { recursive: true, force: true });
-await mkdir(destination, { recursive: true });
-await cp(source, destination, { recursive: true });
+await stat(serverEntry);
+await stat(sourceConfig);
+await mkdir(configDirectory, { recursive: true });
+await copyFile(sourceConfig, destinationConfig);
 
-console.log("Prepared static deployment output in dist/");
+console.log("Prepared vinext deployment bundle in dist/");
