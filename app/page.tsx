@@ -1,6 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CALIBRATION_MOTION_CONFIG,
+  DEFAULT_MOTION_CONFIG,
+  analyzeMotionSample,
+  createCalibratedMotionConfig,
+  createMotionDetectorState,
+  type MotionDetectorConfig,
+} from "../lib/motionDetection";
 
 type PainSide = "left" | "right";
 type ArmSide = "left" | "right";
@@ -8,12 +16,18 @@ type Screen =
   | "welcome"
   | "setup"
   | "camera"
+  | "sensor"
   | "target"
   | "countdown"
   | "exercise"
   | "complete"
   | "finished";
-type CameraStatus = "idle" | "requesting" | "ready" | "failed" | "skipped";
+type CameraStatus = "idle" | "requesting" | "ready" | "failed";
+type DetectionMode = "vision" | "motion" | "manual";
+type SensorStep = "intro" | "requesting" | "calibrating" | "ready" | "error";
+type DeviceMotionEventConstructorWithPermission = typeof DeviceMotionEvent & {
+  requestPermission?: () => Promise<PermissionState>;
+};
 
 type ProtocolItem = {
   id: number;
@@ -82,7 +96,7 @@ function painSideName(side: PainSide) {
 
 function currentStage(screen: Screen) {
   if (screen === "welcome") return 0;
-  if (screen === "setup" || screen === "camera") return 1;
+  if (screen === "setup" || screen === "camera" || screen === "sensor") return 1;
   if (screen === "target") return 2;
   return 3;
 }
@@ -344,6 +358,100 @@ function PhoneSetupVisual({ step }: { step: number }) {
   );
 }
 
+function SensorSetupVisual({
+  arm,
+  sensorStep,
+  signalLevel,
+}: {
+  arm: ArmSide;
+  sensorStep: SensorStep;
+  signalLevel: number;
+}) {
+  const isActive = sensorStep === "calibrating" || sensorStep === "ready";
+
+  return (
+    <div className="sensor-visual" aria-hidden="true">
+      <div className="sensor-visual__halo" />
+      <svg className="sensor-hand-illustration" viewBox="0 0 430 520">
+        <defs>
+          <linearGradient id="sensorPhone" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#244f5a" />
+            <stop offset="1" stopColor="#102f38" />
+          </linearGradient>
+          <filter id="sensorShadow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="15" stdDeviation="14" floodOpacity=".18" />
+          </filter>
+        </defs>
+        <g filter="url(#sensorShadow)">
+          <rect x="154" y="69" width="151" height="292" rx="28" fill="url(#sensorPhone)" />
+          <rect x="168" y="88" width="123" height="239" rx="18" fill="#eff7f3" />
+          <rect x="202" y="78" width="55" height="7" rx="4" fill="#81979b" />
+          <circle cx="229" cy="342" r="8" fill="#dcece5" />
+          <g transform="translate(229 198)">
+            <circle r="60" fill="#dcece5" />
+            <path
+              d="M-30 8c8-32 48-32 60 0"
+              fill="none"
+              stroke="#2e7775"
+              strokeWidth="10"
+              strokeLinecap="round"
+            />
+            <circle cx="-20" cy="-17" r="6" fill="#183e49" />
+            <circle cx="20" cy="-17" r="6" fill="#183e49" />
+            <text x="0" y="85" textAnchor="middle" fill="#183e49" fontSize="16" fontWeight="900">
+              센서 준비
+            </text>
+          </g>
+        </g>
+
+        <path
+          d="M112 405c-9-43 5-102 39-127 18-13 34 0 27 18l-12 30 17-61c4-15 23-11 20 4l-11 57 20-70c4-15 24-10 20 6l-16 67 23-57c6-14 24-5 18 10l-24 65 21-33c9-13 25 0 17 13l-34 56c-16 27-45 48-73 48-28 0-46-17-52-46Z"
+          fill="#f2caaa"
+          stroke="#9d684e"
+          strokeWidth="3"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M303 287c25-7 54 4 66 25 9 16 3 34-15 37-16 2-28-12-43-16-12-4-28-2-38-10-13-10-6-30 30-36Z"
+          fill="#f2caaa"
+          stroke="#9d684e"
+          strokeWidth="3"
+        />
+        <path
+          d="M337 273c19-16 39-17 56-6"
+          fill="none"
+          stroke="#dd403a"
+          strokeWidth="6"
+          strokeLinecap="round"
+          className={isActive ? "sensor-tap-wave" : ""}
+        />
+        <path
+          d="M325 249c24-22 51-27 78-16"
+          fill="none"
+          stroke="#dd403a"
+          strokeWidth="5"
+          strokeLinecap="round"
+          className={isActive ? "sensor-tap-wave sensor-tap-wave--delay" : ""}
+        />
+      </svg>
+      <div className="sensor-hold-label">
+        <Icon name="phone" size={22} />
+        <span>
+          <small>휴대폰을 쥘 손</small>
+          <strong>{sideName(arm)}</strong>
+        </span>
+      </div>
+      <div className="sensor-visual__signal">
+        <span>센서 반응</span>
+        <i>
+          <b style={{ width: `${signalLevel}%` }} />
+        </i>
+        <strong>{isActive ? "감지 중" : "준비 전"}</strong>
+      </div>
+    </div>
+  );
+}
+
 function ProgressHeader({
   screen,
   onHelp,
@@ -490,6 +598,14 @@ export default function Home() {
   const [workingArm, setWorkingArm] = useState<ArmSide>("left");
   const [setupIndex, setSetupIndex] = useState(0);
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>("idle");
+  const [detectionMode, setDetectionMode] = useState<DetectionMode>("vision");
+  const [sensorStep, setSensorStep] = useState<SensorStep>("intro");
+  const [sensorCalibrationCount, setSensorCalibrationCount] = useState(0);
+  const [sensorSignalLevel, setSensorSignalLevel] = useState(0);
+  const [sensorHasSignal, setSensorHasSignal] = useState(false);
+  const [sensorMessage, setSensorMessage] = useState("");
+  const [sensorConfig, setSensorConfig] =
+    useState<MotionDetectorConfig>(DEFAULT_MOTION_CONFIG);
   const [targetIndex, setTargetIndex] = useState(0);
   const [count, setCount] = useState(0);
   const [countdown, setCountdown] = useState(3);
@@ -503,6 +619,10 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const exerciseStartRef = useRef<number | null>(null);
+  const motionStateRef = useRef(createMotionDetectorState());
+  const calibrationPeaksRef = useRef<number[]>([]);
+  const lastSignalPaintRef = useRef(0);
+  const signalDecayTimerRef = useRef<number | null>(null);
 
   const currentTarget = protocol[targetIndex];
 
@@ -514,8 +634,17 @@ export default function Home() {
       if (cameraStatus === "ready")
         return "카메라가 준비되었습니다. 팔꿈치와 손목이 화면 안에 보이면 계속해 주세요.";
       if (cameraStatus === "failed")
-        return "카메라를 사용할 수 없습니다. 카메라 없이 체험하기를 누르면 계속할 수 있습니다.";
-      return "카메라로 팔 위치를 확인하거나, 카메라 없이 체험할 수 있습니다.";
+        return "카메라를 사용할 수 없습니다. 휴대폰 센서로 톡톡 감지하기를 누르면 계속할 수 있습니다.";
+      return "카메라로 팔 위치를 확인하거나, 휴대폰 센서로 실제 톡톡을 감지할 수 있습니다.";
+    }
+    if (screen === "sensor") {
+      if (sensorStep === "calibrating")
+        return `휴대폰을 ${sideName(workingArm)}의 손에 쥐고, 다른 손으로 폰을 쥔 손을 세 번 가볍게 톡톡하세요. 현재 ${sensorCalibrationCount}번 감지했습니다.`;
+      if (sensorStep === "ready")
+        return "센서 준비가 끝났습니다. 실제 연습에서는 톡톡 충격이 감지될 때만 횟수가 올라갑니다.";
+      if (sensorStep === "error")
+        return "이 기기에서 움직임 센서를 사용할 수 없습니다. 다시 시도하거나 카메라 감지로 돌아갈 수 있습니다.";
+      return `휴대폰을 ${sideName(workingArm)}의 손에 단단히 쥐어 주세요. 다음 화면에서 센서 반응을 세 번 맞춥니다.`;
     }
     if (screen === "target")
       return `${currentTarget.description} 찾은 뒤 빨간 점 위치를 찾았어요 버튼을 눌러 주세요.`;
@@ -526,7 +655,17 @@ export default function Home() {
     if (screen === "complete")
       return `${currentTarget.count}회를 모두 확인했습니다. 다음 타점으로 가거나 이 단계를 다시 할 수 있습니다.`;
     return "오늘의 연습을 모두 마쳤습니다. 수고하셨습니다.";
-  }, [cameraStatus, count, countdown, currentTarget, screen, setupIndex]);
+  }, [
+    cameraStatus,
+    count,
+    countdown,
+    currentTarget,
+    screen,
+    sensorCalibrationCount,
+    sensorStep,
+    setupIndex,
+    workingArm,
+  ]);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -628,11 +767,13 @@ export default function Home() {
       navigator.vibrate?.([80, 70, 120]);
       return;
     }
+    if (detectionMode !== "vision") return;
     const timer = window.setTimeout(registerDetectedHit, reducedMotion ? 650 : 920);
     return () => window.clearTimeout(timer);
   }, [
     count,
     currentTarget.count,
+    detectionMode,
     isRunning,
     reducedMotion,
     registerDetectedHit,
@@ -640,9 +781,105 @@ export default function Home() {
   ]);
 
   useEffect(() => {
+    const sensorIsListening =
+      detectionMode === "motion" &&
+      (sensorStep === "calibrating" || sensorStep === "ready");
+    if (!sensorIsListening) return;
+
+    const handleDeviceMotion = (event: DeviceMotionEvent) => {
+      const activeConfig =
+        sensorStep === "calibrating" ? CALIBRATION_MOTION_CONFIG : sensorConfig;
+      const analysis = analyzeMotionSample(
+        motionStateRef.current,
+        {
+          acceleration: event.acceleration
+            ? {
+                x: event.acceleration.x,
+                y: event.acceleration.y,
+                z: event.acceleration.z,
+              }
+            : null,
+          accelerationIncludingGravity: event.accelerationIncludingGravity
+            ? {
+                x: event.accelerationIncludingGravity.x,
+                y: event.accelerationIncludingGravity.y,
+                z: event.accelerationIncludingGravity.z,
+              }
+            : null,
+          timestamp: event.timeStamp || performance.now(),
+        },
+        activeConfig,
+      );
+      motionStateRef.current = analysis.state;
+
+      if (analysis.source === "unavailable") {
+        setSensorMessage("센서 값이 비어 있어요. 다른 브라우저에서 다시 시도해 주세요.");
+        return;
+      }
+
+      setSensorHasSignal(true);
+      const now = performance.now();
+      if (now - lastSignalPaintRef.current >= 70) {
+        lastSignalPaintRef.current = now;
+        const level = Math.min(
+          100,
+          Math.round((analysis.magnitude / Math.max(activeConfig.hitThreshold, 0.1)) * 72),
+        );
+        setSensorSignalLevel(level);
+        if (signalDecayTimerRef.current !== null) {
+          window.clearTimeout(signalDecayTimerRef.current);
+        }
+        signalDecayTimerRef.current = window.setTimeout(
+          () => setSensorSignalLevel(0),
+          180,
+        );
+      }
+
+      if (!analysis.hit) return;
+
+      if (sensorStep === "calibrating") {
+        if (calibrationPeaksRef.current.length >= 3) return;
+        calibrationPeaksRef.current.push(analysis.magnitude);
+        const nextCount = calibrationPeaksRef.current.length;
+        setSensorCalibrationCount(nextCount);
+        playBeat();
+        navigator.vibrate?.(45);
+
+        if (nextCount === 3) {
+          setSensorConfig(
+            createCalibratedMotionConfig(calibrationPeaksRef.current),
+          );
+          setSensorStep("ready");
+          setSensorMessage("세 번의 톡톡을 확인했어요. 센서를 이 손에 맞췄습니다.");
+          navigator.vibrate?.([70, 60, 100]);
+        }
+        return;
+      }
+
+      if (screen === "exercise" && isRunning) {
+        registerDetectedHit();
+      }
+    };
+
+    window.addEventListener("devicemotion", handleDeviceMotion);
+    return () => window.removeEventListener("devicemotion", handleDeviceMotion);
+  }, [
+    detectionMode,
+    isRunning,
+    playBeat,
+    registerDetectedHit,
+    screen,
+    sensorConfig,
+    sensorStep,
+  ]);
+
+  useEffect(() => {
     return () => {
       stopCamera();
       window.speechSynthesis?.cancel();
+      if (signalDecayTimerRef.current !== null) {
+        window.clearTimeout(signalDecayTimerRef.current);
+      }
     };
   }, [stopCamera]);
 
@@ -651,6 +888,15 @@ export default function Home() {
     setPainSide(side);
     setWorkingArm(guideArm);
     setSetupIndex(0);
+    setDetectionMode("vision");
+    setSensorStep("intro");
+    setSensorCalibrationCount(0);
+    setSensorSignalLevel(0);
+    setSensorHasSignal(false);
+    setSensorMessage("");
+    setSensorConfig(DEFAULT_MOTION_CONFIG);
+    motionStateRef.current = createMotionDetectorState();
+    calibrationPeaksRef.current = [];
     setScreen("setup");
     window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
   };
@@ -677,11 +923,92 @@ export default function Home() {
     }
   };
 
-  const enterTarget = (status: "camera" | "skipped") => {
-    if (status === "skipped") {
-      setCameraStatus("skipped");
-      stopCamera();
+  const enterVisionTarget = () => {
+    setDetectionMode("vision");
+    setScreen("target");
+  };
+
+  const startSensorPath = () => {
+    stopCamera();
+    setDetectionMode("motion");
+    setSensorStep("intro");
+    setSensorCalibrationCount(0);
+    setSensorSignalLevel(0);
+    setSensorHasSignal(false);
+    setSensorMessage("");
+    setSensorConfig(DEFAULT_MOTION_CONFIG);
+    motionStateRef.current = createMotionDetectorState();
+    calibrationPeaksRef.current = [];
+    setScreen("sensor");
+  };
+
+  const requestMotionAccess = async () => {
+    playBeat();
+    setSensorStep("requesting");
+    setSensorMessage("");
+
+    if (!window.isSecureContext) {
+      setSensorStep("error");
+      setSensorMessage("움직임 센서는 보안 연결(HTTPS)에서만 사용할 수 있어요.");
+      return;
     }
+
+    if (!("DeviceMotionEvent" in window)) {
+      setSensorStep("error");
+      setSensorMessage("이 기기나 브라우저에는 움직임 센서 기능이 없어요.");
+      return;
+    }
+
+    try {
+      const MotionEventConstructor =
+        window.DeviceMotionEvent as DeviceMotionEventConstructorWithPermission;
+      const permission = MotionEventConstructor.requestPermission
+        ? await MotionEventConstructor.requestPermission()
+        : "granted";
+
+      if (permission !== "granted") {
+        setSensorStep("error");
+        setSensorMessage(
+          "움직임 센서 권한이 허용되지 않았어요. 브라우저 설정을 확인해 주세요.",
+        );
+        return;
+      }
+
+      motionStateRef.current = createMotionDetectorState();
+      calibrationPeaksRef.current = [];
+      setSensorCalibrationCount(0);
+      setSensorSignalLevel(0);
+      setSensorHasSignal(false);
+      setSensorConfig(DEFAULT_MOTION_CONFIG);
+      setSensorMessage("센서가 연결됐어요. 이제 세 번 가볍게 톡톡해 주세요.");
+      setSensorStep("calibrating");
+    } catch {
+      setSensorStep("error");
+      setSensorMessage(
+        "움직임 센서 권한을 열지 못했어요. 버튼을 눌러 다시 시도해 주세요.",
+      );
+    }
+  };
+
+  const restartSensorCalibration = () => {
+    motionStateRef.current = createMotionDetectorState();
+    calibrationPeaksRef.current = [];
+    setSensorCalibrationCount(0);
+    setSensorSignalLevel(0);
+    setSensorHasSignal(false);
+    setSensorMessage("다시 세 번 가볍게 톡톡해 주세요.");
+    setSensorStep("calibrating");
+  };
+
+  const enterSensorTarget = () => {
+    if (sensorStep !== "ready") return;
+    setDetectionMode("motion");
+    setScreen("target");
+  };
+
+  const enterManualTarget = () => {
+    stopCamera();
+    setDetectionMode("manual");
     setScreen("target");
   };
 
@@ -718,6 +1045,15 @@ export default function Home() {
     setWorkingArm("left");
     setSetupIndex(0);
     setCameraStatus("idle");
+    setDetectionMode("vision");
+    setSensorStep("intro");
+    setSensorCalibrationCount(0);
+    setSensorSignalLevel(0);
+    setSensorHasSignal(false);
+    setSensorMessage("");
+    setSensorConfig(DEFAULT_MOTION_CONFIG);
+    motionStateRef.current = createMotionDetectorState();
+    calibrationPeaksRef.current = [];
     setTargetIndex(0);
     setCount(0);
     setIsRunning(false);
@@ -846,6 +1182,19 @@ export default function Home() {
                   : "팔 위치를 맞췄어요"}
                 <Icon name="arrow" />
               </button>
+              <div className="choice-divider" aria-hidden="true">
+                <span />
+                또는
+                <span />
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={startSensorPath}
+              >
+                <Icon name="phone" />
+                휴대폰을 손에 쥐고 센서로 할게요
+              </button>
               <button
                 type="button"
                 className="text-button"
@@ -877,8 +1226,8 @@ export default function Home() {
               : "카메라로 위치를 확인할까요?"}
           </h1>
           <p className="lead">
-            카메라는 팔 위치를 확인하는 데만 사용해요. 허용하지 않아도 연습을
-            끝까지 체험할 수 있습니다.
+            카메라는 팔 위치를 확인하는 데만 사용해요. 카메라를 쓰지 않을 때는
+            휴대폰의 움직임 센서로 실제 톡톡 충격을 셀 수 있습니다.
           </p>
           <div className="privacy-note">
             <span aria-hidden="true">✓</span>
@@ -903,7 +1252,7 @@ export default function Home() {
               <button
                 type="button"
                 className="primary-button"
-                onClick={() => enterTarget("camera")}
+                onClick={enterVisionTarget}
               >
                 팔꿈치와 손목이 잘 보여요
                 <Icon name="arrow" />
@@ -912,15 +1261,16 @@ export default function Home() {
             {cameraStatus === "failed" && (
               <div className="camera-error" role="alert">
                 <strong>카메라를 열지 못했어요.</strong>
-                <span>괜찮아요. 아래 버튼으로 바로 계속할 수 있어요.</span>
+                <span>괜찮아요. 휴대폰 센서로 실제 톡톡을 셀 수 있어요.</span>
               </div>
             )}
             <button
               type="button"
               className="secondary-button"
-              onClick={() => enterTarget("skipped")}
+              onClick={startSensorPath}
             >
-              카메라 없이 체험할게요
+              <Icon name="phone" />
+              휴대폰 센서로 톡톡 감지하기
             </button>
             {cameraStatus === "failed" && (
               <button type="button" className="text-button" onClick={requestCamera}>
@@ -965,6 +1315,200 @@ export default function Home() {
     </main>
   );
 
+  const renderSensor = () => (
+    <main className="screen-layout">
+      <section className="sensor-grid">
+        <SensorSetupVisual
+          arm={workingArm}
+          sensorStep={sensorStep}
+          signalLevel={sensorSignalLevel}
+        />
+        <div className="screen-copy sensor-copy">
+          <p className="eyebrow">준비 4 · 움직임 센서 맞추기</p>
+          {sensorStep === "intro" && (
+            <>
+              <h1>{sideName(workingArm)}의 손으로 휴대폰을 쥐어 주세요</h1>
+              <p className="lead">
+                다른 손으로 폰을 쥔 손을 톡톡하면, 휴대폰의 가속도 센서가 작은
+                충격을 확인합니다.
+              </p>
+              <div className="sensor-howto">
+                <span><b>1</b> 케이스가 미끄럽지 않게 단단히 잡기</span>
+                <span><b>2</b> 팔과 손의 힘은 편하게 풀기</span>
+                <span><b>3</b> 다른 손의 손가락 끝으로 가볍게 톡톡하기</span>
+              </div>
+              <div className="sensor-privacy-note">
+                <Icon name="check" size={22} />
+                <p>
+                  <strong>센서 값은 저장하거나 전송하지 않아요.</strong>
+                  이 화면에서 충격 여부를 계산하는 데만 사용합니다.
+                </p>
+              </div>
+              <div className="button-stack">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={requestMotionAccess}
+                >
+                  <Icon name="phone" />
+                  휴대폰을 쥐었어요. 센서 시작하기
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setDetectionMode("vision");
+                    setScreen("camera");
+                  }}
+                >
+                  카메라 확인으로 돌아갈게요
+                </button>
+              </div>
+            </>
+          )}
+
+          {sensorStep === "requesting" && (
+            <>
+              <h1>센서 연결을 기다리고 있어요</h1>
+              <p className="lead">
+                권한 창이 보이면 움직임 및 방향 접근을 허용해 주세요.
+              </p>
+              <button type="button" className="primary-button" disabled>
+                움직임 센서를 연결하고 있어요…
+              </button>
+            </>
+          )}
+
+          {sensorStep === "calibrating" && (
+            <>
+              <h1>폰을 쥔 손을 3번 톡톡해 주세요</h1>
+              <p className="lead">
+                평소 연습할 세기로 한 번씩 천천히 두드리면, 센서가 이 손에 맞는
+                감지 세기를 정합니다.
+              </p>
+              <div className="calibration-count" aria-live="polite">
+                {[0, 1, 2].map((index) => {
+                  const checked = index < sensorCalibrationCount;
+                  return (
+                    <span key={index} className={checked ? "is-checked" : ""}>
+                      {checked ? "✓" : index + 1}
+                      <small>{checked ? "감지됨" : "기다림"}</small>
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="sensor-live-status">
+                <i className={sensorHasSignal ? "is-live" : ""} />
+                <p>
+                  <strong>
+                    {sensorHasSignal
+                      ? "휴대폰 움직임을 읽고 있어요"
+                      : "센서 신호를 기다리고 있어요"}
+                  </strong>
+                  <small>
+                    {sensorMessage ||
+                      "화면이 켜진 채로 휴대폰을 손에 쥐고 톡톡해 주세요."}
+                  </small>
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setDetectionMode("vision");
+                  setScreen("camera");
+                }}
+              >
+                센서 대신 카메라를 사용할게요
+              </button>
+            </>
+          )}
+
+          {sensorStep === "ready" && (
+            <>
+              <div className="sensor-ready-mark">
+                <Icon name="check" size={45} />
+              </div>
+              <h1>센서 준비가 끝났어요</h1>
+              <p className="lead">
+                이제 자동으로 횟수를 올리지 않아요. 실제 톡톡 충격이 휴대폰에
+                전달될 때만 한 번씩 셉니다.
+              </p>
+              <div className="sensor-ready-summary">
+                <span>
+                  <small>보정한 횟수</small>
+                  <strong>{sensorCalibrationCount} / 3회</strong>
+                </span>
+                <span>
+                  <small>휴대폰을 쥔 손</small>
+                  <strong>{sideName(workingArm)}</strong>
+                </span>
+              </div>
+              <div className="button-stack">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={enterSensorTarget}
+                >
+                  센서로 톡톡 연습 시작하기
+                  <Icon name="arrow" />
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={restartSensorCalibration}
+                >
+                  <Icon name="repeat" />
+                  센서를 다시 맞출게요
+                </button>
+              </div>
+            </>
+          )}
+
+          {sensorStep === "error" && (
+            <>
+              <h1>센서를 사용할 수 없어요</h1>
+              <p className="lead" role="alert">
+                {sensorMessage}
+              </p>
+              <div className="sensor-error-help">
+                휴대폰의 Safari 또는 Chrome에서 HTTPS 주소로 열고, 움직임 센서
+                권한을 허용했는지 확인해 주세요.
+              </div>
+              <div className="button-stack">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={requestMotionAccess}
+                >
+                  센서 연결을 다시 시도할게요
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setDetectionMode("vision");
+                    setScreen("camera");
+                  }}
+                >
+                  <Icon name="camera" />
+                  카메라 감지로 돌아가기
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={enterManualTarget}
+                >
+                  센서 없는 기기에서 직접 횟수를 기록할게요
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+
   const renderTarget = () => (
     <main className="screen-layout">
       <section className="task-grid">
@@ -976,7 +1520,14 @@ export default function Home() {
           <ArmGuide arm={workingArm} targetY={currentTarget.targetY} />
         </div>
         <div className="screen-copy task-copy">
-          <p className="eyebrow">타점 찾기 · {currentTarget.shortLabel}</p>
+          <p className="eyebrow">
+            {detectionMode === "motion"
+              ? "센서 감지"
+              : detectionMode === "manual"
+                ? "직접 기록"
+                : "카메라 감지"}{" "}
+            · {currentTarget.shortLabel}
+          </p>
           <h1>빨간 점의 위치를 찾아주세요</h1>
           <p className="lead">{currentTarget.description}</p>
           <div className="location-note">
@@ -993,6 +1544,24 @@ export default function Home() {
               톡톡하기는 다음 화면에서 시작해요.
             </p>
           </div>
+          {detectionMode === "motion" && (
+            <div className="sensor-grip-reminder">
+              <Icon name="phone" />
+              <p>
+                <strong>휴대폰은 {sideName(workingArm)}의 손에 계속 쥐어 주세요.</strong>
+                빨간 점을 톡톡하면 충격이 팔을 타고 휴대폰 센서에 전달됩니다.
+              </p>
+            </div>
+          )}
+          {detectionMode === "manual" && (
+            <div className="sensor-grip-reminder sensor-grip-reminder--manual">
+              <Icon name="help" />
+              <p>
+                <strong>센서를 사용할 수 없는 기기입니다.</strong>
+                다음 화면에서 실제로 한 번 톡톡할 때마다 기록 버튼을 눌러 주세요.
+              </p>
+            </div>
+          )}
           <div className="button-stack">
             <button type="button" className="primary-button" onClick={startExercise}>
               빨간 점 위치를 찾았어요
@@ -1020,7 +1589,11 @@ export default function Home() {
           {countdown}
         </div>
         <h1>{countdown}초 뒤 톡톡 시작합니다</h1>
-        <p>두드릴 손을 빨간 점 가까이에 편하게 놓아 주세요.</p>
+        <p>
+          {detectionMode === "motion"
+            ? `휴대폰을 ${sideName(workingArm)}의 손에 쥔 채, 다른 손을 빨간 점 가까이에 놓아 주세요.`
+            : "두드릴 손을 빨간 점 가까이에 편하게 놓아 주세요."}
+        </p>
         <div className="countdown-dots" aria-hidden="true">
           {[3, 2, 1].map((number) => (
             <span key={number} className={number >= countdown ? "is-filled" : ""} />
@@ -1039,15 +1612,26 @@ export default function Home() {
 
   const renderExercise = () => {
     const progress = Math.round((count / currentTarget.count) * 100);
+    const runningTitle =
+      detectionMode === "motion"
+        ? "센서가 실제 톡톡을 확인하고 있어요"
+        : detectionMode === "manual"
+          ? "톡톡한 뒤 기록 버튼을 눌러 주세요"
+          : "좋아요. 편한 속도로 계속하세요";
+    const modeDescription =
+      detectionMode === "motion"
+        ? "가속도 센서가 충격을 감지하고 있어요"
+        : detectionMode === "manual"
+          ? "센서 없는 기기에서 직접 기록합니다"
+          : "카메라가 팔을 잘 보고 있어요";
+
     return (
       <main className="screen-layout">
         <section className="exercise-grid">
           <div className="exercise-visual">
             <div className="mode-badge">
               <span aria-hidden="true" />
-              {cameraStatus === "ready"
-                ? "카메라가 팔을 잘 보고 있어요"
-                : "체험 모드로 횟수를 자동 표시합니다"}
+              {modeDescription}
             </div>
             <ArmGuide
               arm={workingArm}
@@ -1074,12 +1658,24 @@ export default function Home() {
             >
               <span style={{ width: `${progress}%` }} />
             </div>
+            {detectionMode === "motion" && (
+              <div className="exercise-sensor-meter">
+                <div>
+                  <span>휴대폰 센서 반응</span>
+                  <strong>{sensorHasSignal ? "실시간 감지 중" : "신호 기다리는 중"}</strong>
+                </div>
+                <i aria-label={`센서 반응 ${sensorSignalLevel}%`}>
+                  <b style={{ width: `${sensorSignalLevel}%` }} />
+                </i>
+                <small>휴대폰을 든 손 전체를 크게 흔들면 정확도가 떨어질 수 있어요.</small>
+              </div>
+            )}
             <div className={`run-status ${isRunning ? "is-running" : "is-paused"}`}>
               <i aria-hidden="true" />
               <span>
                 <strong>
                   {isRunning
-                    ? "좋아요. 편한 속도로 계속하세요"
+                    ? runningTitle
                     : "멈춰 있습니다. 준비되면 계속하세요"}
                 </strong>
                 <small>
@@ -1088,14 +1684,35 @@ export default function Home() {
               </span>
             </div>
             <div className="button-stack">
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => setIsRunning((previous) => !previous)}
-              >
-                <Icon name={isRunning ? "pause" : "play"} />
-                {isRunning ? "잠깐 멈추기" : "계속하기"}
-              </button>
+              {detectionMode === "manual" && isRunning ? (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={registerDetectedHit}
+                >
+                  <Icon name="check" />
+                  한 번 톡톡했어요
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => setIsRunning((previous) => !previous)}
+                >
+                  <Icon name={isRunning ? "pause" : "play"} />
+                  {isRunning ? "잠깐 멈추기" : "계속하기"}
+                </button>
+              )}
+              {detectionMode === "manual" && isRunning && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setIsRunning(false)}
+                >
+                  <Icon name="pause" />
+                  잠깐 멈추기
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary-button"
@@ -1104,6 +1721,20 @@ export default function Home() {
                 <Icon name="sound" />
                 설명을 다시 들을게요
               </button>
+              {detectionMode === "motion" && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setIsRunning(false);
+                    setCount(0);
+                    restartSensorCalibration();
+                    setScreen("sensor");
+                  }}
+                >
+                  센서 감도를 다시 맞출게요
+                </button>
+              )}
             </div>
           </div>
         </section>
@@ -1206,6 +1837,7 @@ export default function Home() {
         {screen === "welcome" && renderWelcome()}
         {screen === "setup" && renderSetup()}
         {screen === "camera" && renderCamera()}
+        {screen === "sensor" && renderSensor()}
         {screen === "target" && renderTarget()}
         {screen === "countdown" && renderCountdown()}
         {screen === "exercise" && renderExercise()}

@@ -10,6 +10,7 @@ test("the complete senior-friendly flow is represented", () => {
     "welcome",
     "setup",
     "camera",
+    "sensor",
     "target",
     "countdown",
     "exercise",
@@ -20,9 +21,14 @@ test("the complete senior-friendly flow is represented", () => {
   }
 });
 
-test("camera and fallback paths are implemented", () => {
+test("camera and real motion-sensor paths are implemented", () => {
   assert.match(page, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(page, /카메라 없이 체험할게요/);
+  assert.match(page, /DeviceMotionEvent/);
+  assert.match(page, /requestPermission/);
+  assert.match(page, /addEventListener\("devicemotion"/);
+  assert.match(page, /analyzeMotionSample/);
+  assert.match(page, /휴대폰 센서로 톡톡 감지하기/);
+  assert.match(page, /폰을 쥔 손을 3번 톡톡해 주세요/);
   assert.match(page, /카메라를 열지 못했어요/);
 });
 
@@ -50,4 +56,13 @@ test("speech, large text, focus, motion, and large tap targets are supported", (
 
 test("a named detection seam remains available for a future vision model", () => {
   assert.match(page, /const registerDetectedHit/);
+});
+
+test("motion mode only counts a detected impact instead of an automatic timer", () => {
+  assert.match(page, /if \(detectionMode !== "vision"\) return/);
+  assert.match(
+    page,
+    /screen === "exercise" && isRunning[\s\S]*registerDetectedHit\(\)/,
+  );
+  assert.match(page, /실제 톡톡 충격이 휴대폰에\s*전달될 때만 한 번씩 셉니다/);
 });

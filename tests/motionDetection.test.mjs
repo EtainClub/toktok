@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  CALIBRATION_MOTION_CONFIG,
+  analyzeMotionSample,
+  createCalibratedMotionConfig,
+  createMotionDetectorState,
+} from "../lib/motionDetection.ts";
+
+const empty = { x: 0, y: 0, z: 0 };
+
+test("a sharp linear acceleration is counted once", () => {
+  let state = createMotionDetectorState();
+  let result = analyzeMotionSample(
+    state,
+    { acceleration: empty, accelerationIncludingGravity: null, timestamp: 0 },
+    CALIBRATION_MOTION_CONFIG,
+  );
+  state = result.state;
+
+  result = analyzeMotionSample(
+    state,
+    {
+      acceleration: { x: 2.8, y: 0.4, z: 0.2 },
+      accelerationIncludingGravity: null,
+      timestamp: 40,
+    },
+    CALIBRATION_MOTION_CONFIG,
+  );
+
+  assert.equal(result.hit, true);
+  assert.ok(result.magnitude > 2.8);
+});
+
+test("cooldown prevents a single impact from being counted twice", () => {
+  let state = createMotionDetectorState();
+  for (const [timestamp, x] of [
+    [0, 0],
+    [40, 3],
+    [90, 0],
+    [160, 3.4],
+  ]) {
+    const result = analyzeMotionSample(
+      state,
+      {
+        acceleration: { x, y: 0, z: 0 },
+        accelerationIncludingGravity: null,
+        timestamp,
+      },
+      CALIBRATION_MOTION_CONFIG,
+    );
+    state = result.state;
+    if (timestamp === 40) assert.equal(result.hit, true);
+    if (timestamp === 160) assert.equal(result.hit, false);
+  }
+});
+
+test("a later distinct impact is counted", () => {
+  let state = createMotionDetectorState();
+  let hits = 0;
+  for (const [timestamp, x] of [
+    [0, 0],
+    [40, 3],
+    [100, 0],
+    [420, 0],
+    [470, 2.6],
+  ]) {
+    const result = analyzeMotionSample(
+      state,
+      {
+        acceleration: { x, y: 0, z: 0 },
+        accelerationIncludingGravity: null,
+        timestamp,
+      },
+      CALIBRATION_MOTION_CONFIG,
+    );
+    state = result.state;
+    if (result.hit) hits += 1;
+  }
+  assert.equal(hits, 2);
+});
+
+test("gravity-inclusive readings are high-pass filtered", () => {
+  let state = createMotionDetectorState();
+  let hits = 0;
+  for (let index = 0; index < 20; index += 1) {
+    const result = analyzeMotionSample(
+      state,
+      {
+        acceleration: null,
+        accelerationIncludingGravity: {
+          x: index * 0.01,
+          y: 0,
+          z: 9.81 - index * 0.005,
+        },
+        timestamp: index * 40,
+      },
+      CALIBRATION_MOTION_CONFIG,
+    );
+    state = result.state;
+    if (result.hit) hits += 1;
+  }
+  assert.equal(hits, 0);
+});
+
+test("calibration adapts the hit threshold and keeps safe bounds", () => {
+  const ordinary = createCalibratedMotionConfig([2.5, 3, 3.5]);
+  assert.equal(ordinary.hitThreshold, 1.44);
+  assert.ok(ordinary.jerkThreshold >= 7);
+
+  assert.equal(createCalibratedMotionConfig([0.2, 0.3, 0.4]).hitThreshold, 1.2);
+  assert.equal(createCalibratedMotionConfig([30, 32, 34]).hitThreshold, 7.5);
+});
