@@ -11,6 +11,12 @@ import {
   type MotionDetectorConfig,
   type MotionSensitivity,
 } from "../lib/motionDetection";
+import {
+  brtProtocols,
+  type HandView,
+  type ProtocolItem,
+  type RoutineKey,
+} from "../lib/brtProtocols";
 
 type PainSide = "left" | "right";
 type ArmSide = "left" | "right";
@@ -23,6 +29,7 @@ type Screen =
   | "countdown"
   | "exercise"
   | "complete"
+  | "finishHold"
   | "finished";
 type CameraStatus = "idle" | "requesting" | "ready" | "failed";
 type DetectionMode = "vision" | "motion" | "manual";
@@ -58,15 +65,6 @@ type DocumentWithSensorPolicy = Document & {
   permissionsPolicy?: SensorPermissionsPolicy;
 };
 
-type ProtocolItem = {
-  id: number;
-  label: string;
-  shortLabel: string;
-  description: string;
-  detail: string;
-  count: number;
-  targetY: number;
-};
 
 const KOREAN_TTS_LANGUAGE = "ko-KR";
 
@@ -85,35 +83,6 @@ function findKoreanVoice(voices: SpeechSynthesisVoice[]) {
   );
 }
 
-const protocol: ProtocolItem[] = [
-  {
-    id: 1,
-    label: "첫 번째 연습 타점",
-    shortLabel: "팔 위쪽",
-    description: "팔꿈치와 어깨 사이, 바깥쪽의 빨간 점을 찾아주세요.",
-    detail: "손가락으로 빨간 원 주변을 천천히 짚어 보세요.",
-    count: 20,
-    targetY: 0.32,
-  },
-  {
-    id: 2,
-    label: "두 번째 연습 타점",
-    shortLabel: "팔꿈치 아래",
-    description: "팔꿈치 바로 아래, 바깥쪽의 빨간 점을 찾아주세요.",
-    detail: "팔꿈치 뼈를 먼저 찾은 뒤 손목 방향으로 조금 내려가세요.",
-    count: 15,
-    targetY: 0.55,
-  },
-  {
-    id: 3,
-    label: "세 번째 연습 타점",
-    shortLabel: "손목 위쪽",
-    description: "손목에서 조금 올라온 바깥쪽의 빨간 점을 찾아주세요.",
-    detail: "손목 주름을 찾은 뒤 팔꿈치 방향으로 조금 올라가세요.",
-    count: 10,
-    targetY: 0.77,
-  },
-];
 
 const setupSteps = [
   {
@@ -136,8 +105,8 @@ function sideName(side: ArmSide) {
   return side === "left" ? "왼팔" : "오른팔";
 }
 
-function painSideName(side: PainSide) {
-  return side === "left" ? "왼쪽 어깨" : "오른쪽 어깨";
+function painSideName(side: PainSide, subject: string) {
+  return `${side === "left" ? "왼쪽" : "오른쪽"} ${subject}`;
 }
 
 function sensorSourceName(source: SensorSource) {
@@ -340,10 +309,10 @@ function ArmGuide({
   compact?: boolean;
 }) {
   const isLeft = arm === "left";
-  const armX = isLeft ? 101 : 259;
+  const armX = isLeft ? 259 : 101;
   const dotY = 102 + targetY * 202;
-  const handX = isLeft ? 148 : 212;
-  const handRotation = isLeft ? -18 : 18;
+  const handX = isLeft ? 212 : 148;
+  const handRotation = isLeft ? 18 : -18;
 
   return (
     <div
@@ -380,17 +349,17 @@ function ArmGuide({
         />
         <path
           d="M144 99c-19 4-31 16-36 35l-17 76-5 111c-1 17 7 28 21 29 14 1 24-9 25-26l8-106 25-89Z"
-          fill={isLeft ? "#f2b680" : "#f2caaa"}
-          stroke={isLeft ? "#d06a36" : "#d4a27c"}
-          strokeWidth={isLeft ? 6 : 2}
+          fill={!isLeft ? "#f2b680" : "#f2caaa"}
+          stroke={!isLeft ? "#d06a36" : "#d4a27c"}
+          strokeWidth={!isLeft ? 6 : 2}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
         <path
           d="M216 99c19 4 31 16 36 35l17 76 5 111c1 17-7 28-21 29-14 1-24-9-25-26l-8-106-25-89Z"
-          fill={!isLeft ? "#f2b680" : "#f2caaa"}
-          stroke={!isLeft ? "#d06a36" : "#d4a27c"}
-          strokeWidth={!isLeft ? 6 : 2}
+          fill={isLeft ? "#f2b680" : "#f2caaa"}
+          stroke={isLeft ? "#d06a36" : "#d4a27c"}
+          strokeWidth={isLeft ? 6 : 2}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -434,6 +403,68 @@ function ArmGuide({
         안내할 팔 · <strong>{sideName(arm)}</strong>
       </div>
     </div>
+  );
+}
+
+function handViewName(view: HandView) {
+  if (view === "palm") return "손바닥";
+  if (view === "back") return "손등";
+  return "손날";
+}
+
+function PointGuide({
+  arm,
+  target,
+  compact = false,
+}: {
+  arm: ArmSide;
+  target: ProtocolItem;
+  compact?: boolean;
+}) {
+  const mirror = arm === "left" ? "translate(300 0) scale(-1 1)" : undefined;
+
+  return (
+    <figure
+      className={`point-guide ${compact ? "point-guide--compact" : ""}`}
+      aria-label={`${sideName(arm)} ${handViewName(target.view)}의 ${target.point} 지점`}
+    >
+      <svg viewBox="0 0 300 500" role="img" aria-hidden="true">
+        <g transform={mirror}>
+          {target.view === "edge" ? (
+            <path
+              d="M116 500V251c0-20 10-35 24-44l5-121c1-16 21-16 22 0l4 117c15 8 24 24 24 45v252Z"
+              className="point-guide__skin"
+            />
+          ) : (
+            <>
+              <path
+                d="M105 500v-224c0-30 16-52 40-60l-7-142c-1-18 22-19 24-2l8 118 3-154c0-18 24-18 24 0l-1 154 9-128c1-17 24-15 23 3l-9 145 8-91c2-16 23-12 21 5l-10 116c-3 35-30 57-65 57h-7v203Z"
+                className="point-guide__skin"
+              />
+              <path
+                d="M112 251c-26-20-38-45-31-59 7-13 22-8 34 7l31 38"
+                className="point-guide__thumb"
+              />
+            </>
+          )}
+          <circle cx={target.x} cy={target.y} r="27" className="point-guide__halo" />
+          <circle cx={target.x} cy={target.y} r="16" className="point-guide__dot" />
+          <text
+            x={target.x}
+            y={target.y + 5}
+            textAnchor="middle"
+            className="point-guide__point-name"
+            transform={arm === "left" ? `translate(${2 * target.x} 0) scale(-1 1)` : undefined}
+          >
+            {target.point}
+          </text>
+        </g>
+      </svg>
+      <figcaption>
+        <strong>{sideName(arm)} · {handViewName(target.view)}</strong>
+        <span>{target.point}을 {target.intensity} {target.count}번</span>
+      </figcaption>
+    </figure>
   );
 }
 
@@ -726,6 +757,7 @@ function AppFooter() {
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("welcome");
+  const [routineKey, setRoutineKey] = useState<RoutineKey>("shoulder");
   const [painSide, setPainSide] = useState<PainSide | null>(null);
   const [workingArm, setWorkingArm] = useState<ArmSide>("left");
   const [setupIndex, setSetupIndex] = useState(0);
@@ -764,6 +796,8 @@ export default function Home() {
   const ignoreMotionUntilRef = useRef(0);
   const koreanVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
+  const routine = brtProtocols[routineKey];
+  const protocol = routine.steps;
   const currentTarget = protocol[targetIndex];
   const activeMotionConfig = useMemo(
     () => applyMotionSensitivity(sensorConfig, motionSensitivity),
@@ -795,7 +829,7 @@ export default function Home() {
     if (screen === "countdown")
       return `${countdown}초 뒤 톡톡 연습을 시작합니다.`;
     if (screen === "exercise")
-      return `${currentTarget.label}을 ${currentTarget.count}번 톡톡합니다. 현재 ${count}번 확인했습니다.`;
+      return `${currentTarget.point}을 ${currentTarget.intensity} ${currentTarget.count}번 톡톡합니다. 현재 ${count}번 확인했습니다.`;
     if (screen === "complete")
       return `${currentTarget.count}회를 모두 확인했습니다. 다음 타점으로 가거나 이 단계를 다시 할 수 있습니다.`;
     return "오늘의 연습을 모두 마쳤습니다. 수고하셨습니다.";
@@ -1377,7 +1411,7 @@ export default function Home() {
     setIsRunning(false);
     if (targetIndex >= protocol.length - 1) {
       stopCamera();
-      setScreen("finished");
+      setScreen("finishHold");
       return;
     }
     setTargetIndex((previous) => previous + 1);
@@ -1419,30 +1453,52 @@ export default function Home() {
           <span aria-hidden="true">♥</span>
           혼자서도 천천히 따라 해요
         </div>
-        <p className="eyebrow">오늘의 어깨 편안 연습</p>
+        <p className="eyebrow">오늘의 {routine.name}</p>
         <h1>
-          어느 쪽 어깨가
+          어떤 방법을
           <br />
-          <em>불편하신가요?</em>
+          <em>따라 할까요?</em>
         </h1>
         <p className="welcome__intro">
-          불편한 쪽을 고르면, 반대쪽 팔로 연습할 수 있도록 처음부터 끝까지
-          안내해 드릴게요.
+          먼저 방법을 고른 뒤, 불편한 쪽을 선택해 주세요. 왼쪽과 오른쪽은
+          화면이 아니라 <strong>내 몸을 기준</strong>으로 해요.
         </p>
-        <div className="side-choice" aria-label="불편한 어깨 선택">
+        <div className="routine-choice" aria-label="톡톡 방법 선택">
+          {(["shoulder", "waist"] as RoutineKey[]).map((key) => {
+            const option = brtProtocols[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                className={routineKey === key ? "is-selected" : ""}
+                aria-pressed={routineKey === key}
+                onClick={() => {
+                  setRoutineKey(key);
+                  setTargetIndex(0);
+                }}
+              >
+                <strong>{option.name}</strong>
+                <span>{option.condition}</span>
+                <small>{option.steps.length}단계</small>
+              </button>
+            );
+          })}
+        </div>
+        <h2 className="side-choice-title">어느 쪽 {routine.subject}가 불편한가요?</h2>
+        <div className="side-choice" aria-label={`불편한 ${routine.subject} 선택`}>
           <button type="button" onClick={() => choosePainSide("right")}>
             <span className="side-choice__letter" aria-hidden="true">R</span>
             <span>
-              <strong>오른쪽 어깨가 불편해요</strong>
-              <small>왼팔로 연습을 안내할게요</small>
+              <strong>오른쪽 {routine.subject}가 불편해요</strong>
+              <small>내 왼쪽 손으로 안내할게요</small>
             </span>
             <Icon name="arrow" size={28} />
           </button>
           <button type="button" onClick={() => choosePainSide("left")}>
             <span className="side-choice__letter" aria-hidden="true">L</span>
             <span>
-              <strong>왼쪽 어깨가 불편해요</strong>
-              <small>오른팔로 연습을 안내할게요</small>
+              <strong>왼쪽 {routine.subject}가 불편해요</strong>
+              <small>내 오른쪽 손으로 안내할게요</small>
             </span>
             <Icon name="arrow" size={28} />
           </button>
@@ -1898,7 +1954,7 @@ export default function Home() {
             <span>{targetIndex + 1}</span>
             {protocol.length}개 중 {targetIndex + 1}번째
           </div>
-          <ArmGuide arm={workingArm} targetY={currentTarget.targetY} />
+          <PointGuide arm={workingArm} target={currentTarget} />
         </div>
         <div className="screen-copy task-copy">
           <p className="eyebrow">
@@ -1907,14 +1963,14 @@ export default function Home() {
               : detectionMode === "manual"
                 ? "직접 기록"
                 : "카메라 감지"}{" "}
-            · {currentTarget.shortLabel}
+            · {routine.name} · {currentTarget.point}
           </p>
           <h1>빨간 점의 위치를 찾아주세요</h1>
           <p className="lead">{currentTarget.description}</p>
           <div className="location-note">
             <span className="location-note__target">여기</span>
             <p>
-              <strong>{currentTarget.label}</strong>
+              <strong>{currentTarget.point} · {currentTarget.intensity} {currentTarget.count}번</strong>
               {currentTarget.detail}
             </p>
           </div>
@@ -2014,15 +2070,10 @@ export default function Home() {
               <span aria-hidden="true" />
               {modeDescription}
             </div>
-            <ArmGuide
-              arm={workingArm}
-              targetY={currentTarget.targetY}
-              tapping={isRunning}
-              compact
-            />
+            <PointGuide arm={workingArm} target={currentTarget} compact />
           </div>
           <div className="exercise-panel">
-            <p className="eyebrow">{currentTarget.label}</p>
+            <p className="eyebrow">{routine.name} · {currentTarget.point} · {currentTarget.intensity}</p>
             <h1>빨간 점을 {currentTarget.count}번 톡톡하세요</h1>
             <div className="count-display" aria-live="polite">
               <span>확인된 횟수</span>
@@ -2142,7 +2193,7 @@ export default function Home() {
             <span />
             <div className="complete-check"><Icon name="check" size={58} /></div>
           </div>
-          <p className="eyebrow">{currentTarget.label} 완료</p>
+          <p className="eyebrow">{currentTarget.point} 완료</p>
           <h1>{currentTarget.count}회를 모두 확인했어요</h1>
           <p className="lead">
             서두르지 않아도 괜찮아요. 숨을 한 번 고르고 다음을 직접 골라 주세요.
@@ -2175,6 +2226,56 @@ export default function Home() {
     );
   };
 
+  const renderFinishHold = () => {
+    const firstTarget =
+      protocol.find((item) => item.point === routine.finish.points[0]) ?? protocol[0];
+    const secondTarget =
+      protocol.find((item) => item.point === routine.finish.points[1]) ?? protocol[0];
+
+    return (
+      <main className="screen-layout">
+        <section className="finish-hold-card">
+          <div className="finish-hold-copy">
+            <p className="eyebrow">{routine.name} · 마무리</p>
+            <h1>두 지점을 함께 눌러주세요</h1>
+            <p className="lead">
+              왼손의 <strong>{firstTarget.point}</strong>과 오른손의{" "}
+              <strong>{secondTarget.point}</strong>을 동시에 누릅니다.
+            </p>
+            <div className="finish-timing" aria-label="마무리 동작 반복 방법">
+              <strong>{routine.finish.seconds}초</strong>
+              <span>동안 누르기</span>
+              <b>×</b>
+              <strong>{routine.finish.repetitions}회</strong>
+            </div>
+            <div className="safety-note">
+              <span aria-hidden="true">!</span>
+              <p>
+                <strong>아프지 않은 정도로만 누르세요.</strong>
+                통증이나 불편함이 생기면 바로 멈춥니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                stopCamera();
+                setScreen("finished");
+              }}
+            >
+              3번 모두 했어요
+              <Icon name="arrow" />
+            </button>
+          </div>
+          <div className="finish-targets">
+            <PointGuide arm="left" target={firstTarget} compact />
+            <PointGuide arm="right" target={secondTarget} compact />
+          </div>
+        </section>
+      </main>
+    );
+  };
+
   const renderFinished = () => (
     <main className="screen-layout">
       <section className="finished-card">
@@ -2201,7 +2302,7 @@ export default function Home() {
           {protocol.map((item) => (
             <span key={item.id}>
               <Icon name="check" size={20} />
-              {item.shortLabel} {item.count}회
+              {item.point} {item.count}번
             </span>
           ))}
         </div>
@@ -2233,6 +2334,7 @@ export default function Home() {
         {screen === "countdown" && renderCountdown()}
         {screen === "exercise" && renderExercise()}
         {screen === "complete" && renderComplete()}
+        {screen === "finishHold" && renderFinishHold()}
         {screen === "finished" && renderFinished()}
       </div>
       <AppFooter />
