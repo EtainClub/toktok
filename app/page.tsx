@@ -1,0 +1,1229 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type PainSide = "left" | "right";
+type ArmSide = "left" | "right";
+type Screen =
+  | "welcome"
+  | "setup"
+  | "camera"
+  | "target"
+  | "countdown"
+  | "exercise"
+  | "complete"
+  | "finished";
+type CameraStatus = "idle" | "requesting" | "ready" | "failed" | "skipped";
+
+type ProtocolItem = {
+  id: number;
+  label: string;
+  shortLabel: string;
+  description: string;
+  detail: string;
+  count: number;
+  targetY: number;
+};
+
+const protocol: ProtocolItem[] = [
+  {
+    id: 1,
+    label: "첫 번째 연습 타점",
+    shortLabel: "팔 위쪽",
+    description: "팔꿈치와 어깨 사이, 바깥쪽의 빨간 점을 찾아주세요.",
+    detail: "손가락으로 빨간 원 주변을 천천히 짚어 보세요.",
+    count: 20,
+    targetY: 0.32,
+  },
+  {
+    id: 2,
+    label: "두 번째 연습 타점",
+    shortLabel: "팔꿈치 아래",
+    description: "팔꿈치 바로 아래, 바깥쪽의 빨간 점을 찾아주세요.",
+    detail: "팔꿈치 뼈를 먼저 찾은 뒤 손목 방향으로 조금 내려가세요.",
+    count: 15,
+    targetY: 0.55,
+  },
+  {
+    id: 3,
+    label: "세 번째 연습 타점",
+    shortLabel: "손목 위쪽",
+    description: "손목에서 조금 올라온 바깥쪽의 빨간 점을 찾아주세요.",
+    detail: "손목 주름을 찾은 뒤 팔꿈치 방향으로 조금 올라가세요.",
+    count: 10,
+    targetY: 0.77,
+  },
+];
+
+const setupSteps = [
+  {
+    eyebrow: "준비 1 · 휴대폰 놓기",
+    title: "휴대폰을 세워 놓아 주세요",
+    description:
+      "두 손을 편하게 쓸 수 있도록 책이나 컵에 기대어 세워 주세요.",
+  },
+  {
+    eyebrow: "준비 2 · 위치 맞추기",
+    title: "팔꿈치와 손목이 보이게 앉아 주세요",
+    description:
+      "휴대폰에서 한 걸음 정도 떨어져 앉고, 안내할 팔을 화면 안에 놓아 주세요.",
+  },
+];
+
+const stageLabels = ["팔 선택", "준비", "타점 찾기", "톡톡하기"];
+
+function sideName(side: ArmSide) {
+  return side === "left" ? "왼팔" : "오른팔";
+}
+
+function painSideName(side: PainSide) {
+  return side === "left" ? "왼쪽 어깨" : "오른쪽 어깨";
+}
+
+function currentStage(screen: Screen) {
+  if (screen === "welcome") return 0;
+  if (screen === "setup" || screen === "camera") return 1;
+  if (screen === "target") return 2;
+  return 3;
+}
+
+function Icon({
+  name,
+  size = 24,
+}: {
+  name:
+    | "help"
+    | "sound"
+    | "text"
+    | "home"
+    | "camera"
+    | "phone"
+    | "check"
+    | "pause"
+    | "play"
+    | "repeat"
+    | "arrow";
+  size?: number;
+}) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  const paths: Record<string, React.ReactNode> = {
+    help: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.8 9a2.3 2.3 0 0 1 4.4.9c0 1.8-2.2 2-2.2 3.7" />
+        <path d="M12 17.4h.01" />
+      </>
+    ),
+    sound: (
+      <>
+        <path d="M4 10v4h3l4 3V7l-4 3H4Z" />
+        <path d="M15 9.3a4 4 0 0 1 0 5.4" />
+        <path d="M18 6.8a7.3 7.3 0 0 1 0 10.4" />
+      </>
+    ),
+    text: (
+      <>
+        <path d="M4 6V4h16v2" />
+        <path d="M9 20h6" />
+        <path d="M12 4v16" />
+      </>
+    ),
+    home: (
+      <>
+        <path d="m3 11 9-7 9 7" />
+        <path d="M5 10v10h14V10" />
+        <path d="M9 20v-6h6v6" />
+      </>
+    ),
+    camera: (
+      <>
+        <path d="M4 7h3l1.5-2h7L17 7h3v12H4Z" />
+        <circle cx="12" cy="13" r="3.5" />
+      </>
+    ),
+    phone: (
+      <>
+        <rect x="7" y="2.5" width="10" height="19" rx="2" />
+        <path d="M10 5h4" />
+        <path d="M11.7 18.7h.6" />
+      </>
+    ),
+    check: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="m8 12 2.7 2.7L16.5 9" />
+      </>
+    ),
+    pause: (
+      <>
+        <rect x="6" y="5" width="4" height="14" rx="1" />
+        <rect x="14" y="5" width="4" height="14" rx="1" />
+      </>
+    ),
+    play: <path d="m8 5 11 7-11 7Z" />,
+    repeat: (
+      <>
+        <path d="M19 7v5h-5" />
+        <path d="M5.4 17A8 8 0 0 0 19 12" />
+        <path d="M5 12H1V7" />
+        <path d="M5 12a8 8 0 0 1 13.6-5" />
+      </>
+    ),
+    arrow: (
+      <>
+        <path d="M5 12h14" />
+        <path d="m14 7 5 5-5 5" />
+      </>
+    ),
+  };
+
+  return <svg {...common}>{paths[name]}</svg>;
+}
+
+function ArmGuide({
+  arm,
+  targetY,
+  tapping = false,
+  compact = false,
+}: {
+  arm: ArmSide;
+  targetY: number;
+  tapping?: boolean;
+  compact?: boolean;
+}) {
+  const isLeft = arm === "left";
+  const armX = isLeft ? 101 : 259;
+  const dotY = 102 + targetY * 202;
+  const handX = isLeft ? 148 : 212;
+  const handRotation = isLeft ? -18 : 18;
+
+  return (
+    <div
+      className={`arm-guide ${compact ? "arm-guide--compact" : ""}`}
+      aria-label={`${sideName(arm)}의 ${Math.round(
+        targetY * 100,
+      )}% 지점에 빨간 타점이 표시된 그림`}
+    >
+      <svg
+        viewBox="0 0 360 420"
+        role="img"
+        aria-hidden="true"
+        className="body-map"
+      >
+        <defs>
+          <linearGradient id="shirt" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#1f4f5b" />
+            <stop offset="1" stopColor="#173b46" />
+          </linearGradient>
+          <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow dx="0" dy="7" stdDeviation="7" floodOpacity=".14" />
+          </filter>
+        </defs>
+
+        <circle cx="180" cy="54" r="38" fill="#f2caaa" />
+        <path
+          d="M143 52c3-26 17-39 38-39 22 0 36 15 37 38-13-5-25-13-34-24-10 14-24 22-41 25Z"
+          fill="#26393f"
+        />
+        <path
+          d="M153 92c-31 7-44 29-43 66l10 113c2 20 14 31 31 31h58c17 0 29-11 31-31l10-113c1-37-12-59-43-66Z"
+          fill="url(#shirt)"
+          filter="url(#softShadow)"
+        />
+        <path
+          d="M144 99c-19 4-31 16-36 35l-17 76-5 111c-1 17 7 28 21 29 14 1 24-9 25-26l8-106 25-89Z"
+          fill={isLeft ? "#f2b680" : "#f2caaa"}
+          stroke={isLeft ? "#d06a36" : "#d4a27c"}
+          strokeWidth={isLeft ? 6 : 2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M216 99c19 4 31 16 36 35l17 76 5 111c1 17-7 28-21 29-14 1-24-9-25-26l-8-106-25-89Z"
+          fill={!isLeft ? "#f2b680" : "#f2caaa"}
+          stroke={!isLeft ? "#d06a36" : "#d4a27c"}
+          strokeWidth={!isLeft ? 6 : 2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="M158 301v88" stroke="#203f49" strokeWidth="34" strokeLinecap="round" />
+        <path d="M202 301v88" stroke="#203f49" strokeWidth="34" strokeLinecap="round" />
+
+        <g className="target-marker" transform={`translate(${armX} ${dotY})`}>
+          <circle r="31" fill="#dd403a" opacity=".14" className="target-pulse" />
+          <circle r="21" fill="#fff" stroke="#b9292f" strokeWidth="4" />
+          <circle r="13" fill="#dd403a" />
+          <text
+            x="0"
+            y="4"
+            textAnchor="middle"
+            fontSize="11"
+            fontWeight="900"
+            fill="#fff"
+          >
+            여기
+          </text>
+        </g>
+
+        {tapping && (
+          <g
+            className="tapping-hand"
+            transform={`translate(${handX} ${dotY - 18}) rotate(${handRotation})`}
+          >
+            <path
+              d="M-7 10C-22 2-28-12-21-19c5-5 12 0 16 7l5 8-1-42c0-9 12-9 13 0l2 27 2-24c1-8 12-7 12 1v25l3-18c2-7 12-5 11 3l-2 31c-1 17-10 29-24 32-8 2-17-4-23-21Z"
+              fill="#f6d4bb"
+              stroke="#8b5f4a"
+              strokeWidth="2"
+            />
+            <path d="M-27-11c-12 0-20 5-24 14" stroke="#dd403a" strokeWidth="4" strokeLinecap="round" />
+            <path d="M-25-22c-12-4-20-2-27 5" stroke="#dd403a" strokeWidth="4" strokeLinecap="round" />
+          </g>
+        )}
+      </svg>
+      <div className="arm-label">
+        <span className="arm-label__dot" aria-hidden="true" />
+        안내할 팔 · <strong>{sideName(arm)}</strong>
+      </div>
+    </div>
+  );
+}
+
+function PhoneSetupVisual({ step }: { step: number }) {
+  return (
+    <div className="setup-visual" aria-hidden="true">
+      <div className="setup-blob setup-blob--one" />
+      <div className="setup-blob setup-blob--two" />
+      {step === 0 ? (
+        <div className="phone-scene">
+          <div className="phone-device">
+            <div className="phone-device__speaker" />
+            <div className="phone-device__screen">
+              <span>천천히</span>
+              <strong>톡톡</strong>
+            </div>
+          </div>
+          <div className="phone-stand" />
+          <div className="book book--one" />
+          <div className="book book--two" />
+          <div className="success-tag">
+            <Icon name="check" size={20} /> 두 손이 자유로워요
+          </div>
+        </div>
+      ) : (
+        <div className="distance-scene">
+          <div className="mini-phone">
+            <Icon name="camera" size={28} />
+          </div>
+          <div className="distance-line">
+            <span />
+            <strong>한 걸음</strong>
+            <span />
+          </div>
+          <div className="seated-person">
+            <span className="seated-person__head" />
+            <span className="seated-person__body" />
+            <span className="seated-person__arm" />
+            <span className="seated-person__chair" />
+          </div>
+          <div className="frame-cue">팔꿈치부터 손목까지</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProgressHeader({
+  screen,
+  onHelp,
+}: {
+  screen: Screen;
+  onHelp: () => void;
+}) {
+  const activeStage = currentStage(screen);
+
+  return (
+    <header className="topbar">
+      <button
+        className="brand"
+        type="button"
+        onClick={() => window.location.reload()}
+        aria-label="천천히 톡톡 처음 화면으로 돌아가기"
+      >
+        <span className="brand__mark" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        <span className="brand__text">
+          <strong>천천히 톡톡</strong>
+          <small>어깨 편안 연습</small>
+        </span>
+      </button>
+
+      <ol className="stage-list" aria-label="전체 진행 단계">
+        {stageLabels.map((label, index) => (
+          <li
+            key={label}
+            className={`${index === activeStage ? "is-active" : ""} ${
+              index < activeStage ? "is-done" : ""
+            }`}
+            aria-current={index === activeStage ? "step" : undefined}
+          >
+            <span>{index < activeStage ? "✓" : index + 1}</span>
+            <em>{label}</em>
+          </li>
+        ))}
+      </ol>
+
+      <button className="help-button" type="button" onClick={onHelp}>
+        <Icon name="help" size={25} />
+        <span>도움말</span>
+      </button>
+    </header>
+  );
+}
+
+function HelpPanel({
+  open,
+  onClose,
+  onSpeak,
+  largeText,
+  onToggleText,
+  onHome,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSpeak: () => void;
+  largeText: boolean;
+  onToggleText: () => void;
+  onHome: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="help-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="help-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="help-panel__header">
+          <div>
+            <p className="eyebrow">언제든 같은 자리에서</p>
+            <h2 id="help-title">무엇을 도와드릴까요?</h2>
+          </div>
+          <button className="close-button" type="button" onClick={onClose}>
+            도움말 닫기
+          </button>
+        </div>
+        <div className="help-actions">
+          <button type="button" onClick={onSpeak}>
+            <Icon name="sound" />
+            <span>
+              <strong>현재 설명 다시 듣기</strong>
+              <small>지금 화면의 안내를 음성으로 들려드려요</small>
+            </span>
+          </button>
+          <button type="button" onClick={onToggleText}>
+            <Icon name="text" />
+            <span>
+              <strong>{largeText ? "기본 글씨로 보기" : "글자를 더 크게 보기"}</strong>
+              <small>
+                {largeText
+                  ? "처음 크기의 글씨로 돌아가요"
+                  : "본문과 버튼 글씨를 한 단계 키워요"}
+              </small>
+            </span>
+          </button>
+          <button type="button" onClick={onHome}>
+            <Icon name="home" />
+            <span>
+              <strong>처음 화면으로 돌아가기</strong>
+              <small>현재 연습을 끝내고 팔 선택부터 다시 시작해요</small>
+            </span>
+          </button>
+        </div>
+        <p className="keyboard-tip">키보드에서는 Tab 키로 버튼을 이동할 수 있어요.</p>
+      </section>
+    </div>
+  );
+}
+
+function AppFooter() {
+  return (
+    <footer className="app-footer">
+      <span aria-hidden="true">i</span>
+      <p>
+        화면의 타점과 횟수는 <strong>UI 체험용 예시</strong>이며 의료 안내가 아닙니다.
+        아프거나 어지러우면 바로 멈추세요.
+      </p>
+    </footer>
+  );
+}
+
+export default function Home() {
+  const [screen, setScreen] = useState<Screen>("welcome");
+  const [painSide, setPainSide] = useState<PainSide | null>(null);
+  const [workingArm, setWorkingArm] = useState<ArmSide>("left");
+  const [setupIndex, setSetupIndex] = useState(0);
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>("idle");
+  const [targetIndex, setTargetIndex] = useState(0);
+  const [count, setCount] = useState(0);
+  const [countdown, setCountdown] = useState(3);
+  const [isRunning, setIsRunning] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [largeText, setLargeText] = useState(false);
+  const [speechMessage, setSpeechMessage] = useState("");
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const exerciseStartRef = useRef<number | null>(null);
+
+  const currentTarget = protocol[targetIndex];
+
+  const instruction = useMemo(() => {
+    if (screen === "welcome")
+      return "먼저 불편한 어깨를 골라 주세요. 선택한 쪽의 반대편 팔로 연습을 안내합니다.";
+    if (screen === "setup") return setupSteps[setupIndex].description;
+    if (screen === "camera") {
+      if (cameraStatus === "ready")
+        return "카메라가 준비되었습니다. 팔꿈치와 손목이 화면 안에 보이면 계속해 주세요.";
+      if (cameraStatus === "failed")
+        return "카메라를 사용할 수 없습니다. 카메라 없이 체험하기를 누르면 계속할 수 있습니다.";
+      return "카메라로 팔 위치를 확인하거나, 카메라 없이 체험할 수 있습니다.";
+    }
+    if (screen === "target")
+      return `${currentTarget.description} 찾은 뒤 빨간 점 위치를 찾았어요 버튼을 눌러 주세요.`;
+    if (screen === "countdown")
+      return `${countdown}초 뒤 톡톡 연습을 시작합니다.`;
+    if (screen === "exercise")
+      return `${currentTarget.label}을 ${currentTarget.count}번 톡톡합니다. 현재 ${count}번 확인했습니다.`;
+    if (screen === "complete")
+      return `${currentTarget.count}회를 모두 확인했습니다. 다음 타점으로 가거나 이 단계를 다시 할 수 있습니다.`;
+    return "오늘의 연습을 모두 마쳤습니다. 수고하셨습니다.";
+  }, [cameraStatus, count, countdown, currentTarget, screen, setupIndex]);
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const speak = useCallback(
+    (message = instruction) => {
+      if (!("speechSynthesis" in window)) {
+        setSpeechMessage("이 브라우저에서는 음성 안내를 사용할 수 없어요.");
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.lang = "ko-KR";
+      utterance.rate = 0.82;
+      utterance.pitch = 1;
+      const koreanVoice = window.speechSynthesis
+        .getVoices()
+        .find((voice) => voice.lang.toLowerCase().startsWith("ko"));
+      if (koreanVoice) utterance.voice = koreanVoice;
+      utterance.onstart = () => setSpeechMessage("설명을 읽고 있어요.");
+      utterance.onend = () => setSpeechMessage("");
+      utterance.onerror = () =>
+        setSpeechMessage("음성 안내를 재생하지 못했어요. 화면의 글을 확인해 주세요.");
+      window.speechSynthesis.speak(utterance);
+    },
+    [instruction],
+  );
+
+  const playBeat = useCallback(() => {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextClass) return;
+      const context =
+        audioContextRef.current || new AudioContextClass({ latencyHint: "interactive" });
+      audioContextRef.current = context;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 540;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.09);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.1);
+    } catch {
+      // Sound is an enhancement; the visible count remains authoritative.
+    }
+  }, []);
+
+  const registerDetectedHit = useCallback(() => {
+    setCount((previous) => {
+      if (previous >= currentTarget.count) return previous;
+      const next = previous + 1;
+      playBeat();
+      navigator.vibrate?.(35);
+      return next;
+    });
+  }, [currentTarget.count, playBeat]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(query.matches);
+    update();
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "countdown") return;
+    setCountdown(3);
+    const timer = window.setInterval(() => {
+      setCountdown((previous) => {
+        if (previous <= 1) {
+          window.clearInterval(timer);
+          setScreen("exercise");
+          setIsRunning(true);
+          exerciseStartRef.current = Date.now();
+          return 1;
+        }
+        return previous - 1;
+      });
+    }, reducedMotion ? 650 : 1000);
+    return () => window.clearInterval(timer);
+  }, [reducedMotion, screen]);
+
+  useEffect(() => {
+    if (screen !== "exercise" || !isRunning) return;
+    if (count >= currentTarget.count) {
+      setIsRunning(false);
+      setScreen("complete");
+      navigator.vibrate?.([80, 70, 120]);
+      return;
+    }
+    const timer = window.setTimeout(registerDetectedHit, reducedMotion ? 650 : 920);
+    return () => window.clearTimeout(timer);
+  }, [
+    count,
+    currentTarget.count,
+    isRunning,
+    reducedMotion,
+    registerDetectedHit,
+    screen,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+      window.speechSynthesis?.cancel();
+    };
+  }, [stopCamera]);
+
+  const choosePainSide = (side: PainSide) => {
+    const guideArm = side === "left" ? "right" : "left";
+    setPainSide(side);
+    setWorkingArm(guideArm);
+    setSetupIndex(0);
+    setScreen("setup");
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+  };
+
+  const requestCamera = async () => {
+    setCameraStatus("requesting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 960 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraStatus("ready");
+    } catch {
+      setCameraStatus("failed");
+    }
+  };
+
+  const enterTarget = (status: "camera" | "skipped") => {
+    if (status === "skipped") {
+      setCameraStatus("skipped");
+      stopCamera();
+    }
+    setScreen("target");
+  };
+
+  const startExercise = () => {
+    setCount(0);
+    setIsRunning(false);
+    playBeat();
+    setScreen("countdown");
+  };
+
+  const repeatStage = () => {
+    setCount(0);
+    setIsRunning(false);
+    setScreen("target");
+  };
+
+  const nextStage = () => {
+    setCount(0);
+    setIsRunning(false);
+    if (targetIndex >= protocol.length - 1) {
+      stopCamera();
+      setScreen("finished");
+      return;
+    }
+    setTargetIndex((previous) => previous + 1);
+    setScreen("target");
+  };
+
+  const resetApp = () => {
+    stopCamera();
+    window.speechSynthesis?.cancel();
+    setScreen("welcome");
+    setPainSide(null);
+    setWorkingArm("left");
+    setSetupIndex(0);
+    setCameraStatus("idle");
+    setTargetIndex(0);
+    setCount(0);
+    setIsRunning(false);
+    setHelpOpen(false);
+    setSpeechMessage("");
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+  };
+
+  const renderWelcome = () => (
+    <main className="welcome">
+      <section className="welcome__copy">
+        <div className="welcome__badge">
+          <span aria-hidden="true">♥</span>
+          혼자서도 천천히 따라 해요
+        </div>
+        <p className="eyebrow">오늘의 어깨 편안 연습</p>
+        <h1>
+          어느 쪽 어깨가
+          <br />
+          <em>불편하신가요?</em>
+        </h1>
+        <p className="welcome__intro">
+          불편한 쪽을 고르면, 반대쪽 팔로 연습할 수 있도록 처음부터 끝까지
+          안내해 드릴게요.
+        </p>
+        <div className="side-choice" aria-label="불편한 어깨 선택">
+          <button type="button" onClick={() => choosePainSide("right")}>
+            <span className="side-choice__letter" aria-hidden="true">R</span>
+            <span>
+              <strong>오른쪽 어깨가 불편해요</strong>
+              <small>왼팔로 연습을 안내할게요</small>
+            </span>
+            <Icon name="arrow" size={28} />
+          </button>
+          <button type="button" onClick={() => choosePainSide("left")}>
+            <span className="side-choice__letter" aria-hidden="true">L</span>
+            <span>
+              <strong>왼쪽 어깨가 불편해요</strong>
+              <small>오른팔로 연습을 안내할게요</small>
+            </span>
+            <Icon name="arrow" size={28} />
+          </button>
+        </div>
+        <div className="safety-note">
+          <span aria-hidden="true">!</span>
+          <p>
+            <strong>몸이 보내는 신호를 먼저 살펴 주세요.</strong>
+            통증이 심하거나 어지러우면 연습을 시작하지 마세요.
+          </p>
+        </div>
+      </section>
+
+      <section className="welcome__visual" aria-label="톡톡 연습 안내 그림">
+        <div className="visual-card">
+          <div className="visual-card__top">
+            <span>오늘도 가볍게</span>
+            <strong>약 3분</strong>
+          </div>
+          <ArmGuide arm="left" targetY={0.4} tapping />
+          <div className="visual-card__caption">
+            <span>톡</span>
+            <span>톡</span>
+            <p>
+              화면을 보며
+              <br />
+              <strong>내 속도대로</strong>
+            </p>
+          </div>
+        </div>
+        <div className="floating-card floating-card--sound">
+          <Icon name="sound" size={23} />
+          <span>
+            <small>음성 안내</small>
+            <strong>또박또박</strong>
+          </span>
+        </div>
+        <div className="floating-card floating-card--count">
+          <small>확인된 횟수</small>
+          <strong>8 <span>/ 20회</span></strong>
+          <i><b /></i>
+        </div>
+      </section>
+    </main>
+  );
+
+  const renderSetup = () => {
+    const step = setupSteps[setupIndex];
+    return (
+      <main className="screen-layout">
+        <section className="screen-card screen-card--setup">
+          <div className="screen-copy">
+            <p className="eyebrow">{step.eyebrow}</p>
+            <h1>{step.title}</h1>
+            <p className="lead">{step.description}</p>
+            <div className="arm-confirmation">
+              <span>{sideName(workingArm).slice(0, 1)}</span>
+              <p>
+                <small>{painSide && painSideName(painSide)} 반대편</small>
+                <strong>{sideName(workingArm)}을 안내할게요</strong>
+              </p>
+            </div>
+            {setupIndex === 0 ? (
+              <div className="step-tips">
+                <span><b>1</b> 책이나 컵에 기대기</span>
+                <span><b>2</b> 화면이 얼굴을 향하게 두기</span>
+                <span><b>3</b> 두 손을 자유롭게 하기</span>
+              </div>
+            ) : (
+              <div className="step-tips">
+                <span><b>1</b> 휴대폰에서 한 걸음 떨어지기</span>
+                <span><b>2</b> 등을 편하게 펴고 앉기</span>
+                <span><b>3</b> {sideName(workingArm)} 전체가 보이게 하기</span>
+              </div>
+            )}
+            <div className="button-stack">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  if (setupIndex === 0) setSetupIndex(1);
+                  else setScreen("camera");
+                }}
+              >
+                {setupIndex === 0
+                  ? "휴대폰을 세워 놓았어요"
+                  : "팔 위치를 맞췄어요"}
+                <Icon name="arrow" />
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  if (setupIndex > 0) setSetupIndex(0);
+                  else resetApp();
+                }}
+              >
+                {setupIndex > 0
+                  ? "휴대폰 놓기 안내로 돌아가기"
+                  : "어깨 선택을 다시 할게요"}
+              </button>
+            </div>
+          </div>
+          <PhoneSetupVisual step={setupIndex} />
+        </section>
+      </main>
+    );
+  };
+
+  const renderCamera = () => (
+    <main className="screen-layout">
+      <section className="camera-grid">
+        <div className="screen-copy">
+          <p className="eyebrow">준비 3 · 카메라 확인</p>
+          <h1>
+            {cameraStatus === "ready"
+              ? "팔이 화면 안에 잘 보이나요?"
+              : "카메라로 위치를 확인할까요?"}
+          </h1>
+          <p className="lead">
+            카메라는 팔 위치를 확인하는 데만 사용해요. 허용하지 않아도 연습을
+            끝까지 체험할 수 있습니다.
+          </p>
+          <div className="privacy-note">
+            <span aria-hidden="true">✓</span>
+            <p>
+              <strong>영상은 저장하지 않아요.</strong>
+              이 기기 화면에서만 바로 보여 드립니다.
+            </p>
+          </div>
+          <div className="button-stack">
+            {cameraStatus === "idle" && (
+              <button type="button" className="primary-button" onClick={requestCamera}>
+                <Icon name="camera" />
+                카메라로 팔 위치 확인하기
+              </button>
+            )}
+            {cameraStatus === "requesting" && (
+              <button type="button" className="primary-button" disabled>
+                카메라 연결을 기다리고 있어요…
+              </button>
+            )}
+            {cameraStatus === "ready" && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => enterTarget("camera")}
+              >
+                팔꿈치와 손목이 잘 보여요
+                <Icon name="arrow" />
+              </button>
+            )}
+            {cameraStatus === "failed" && (
+              <div className="camera-error" role="alert">
+                <strong>카메라를 열지 못했어요.</strong>
+                <span>괜찮아요. 아래 버튼으로 바로 계속할 수 있어요.</span>
+              </div>
+            )}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => enterTarget("skipped")}
+            >
+              카메라 없이 체험할게요
+            </button>
+            {cameraStatus === "failed" && (
+              <button type="button" className="text-button" onClick={requestCamera}>
+                카메라 연결을 다시 시도할게요
+              </button>
+            )}
+          </div>
+        </div>
+        <div className={`camera-preview camera-preview--${cameraStatus}`}>
+          <video ref={videoRef} muted playsInline aria-label="카메라 미리보기" />
+          {cameraStatus !== "ready" && (
+            <div className="camera-placeholder">
+              <div className="camera-placeholder__icon">
+                <Icon name="camera" size={42} />
+              </div>
+              <strong>
+                {cameraStatus === "requesting"
+                  ? "카메라를 연결하고 있어요"
+                  : cameraStatus === "failed"
+                    ? "카메라 없이도 괜찮아요"
+                    : "여기에 내 모습이 보여요"}
+              </strong>
+              <span>팔꿈치부터 손목까지 화면 안에 놓아 주세요</span>
+            </div>
+          )}
+          {cameraStatus === "ready" && (
+            <>
+              <div className="camera-frame" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className="camera-live">
+                <i />
+                카메라가 팔을 잘 보고 있어요
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+
+  const renderTarget = () => (
+    <main className="screen-layout">
+      <section className="task-grid">
+        <div className="task-visual">
+          <div className="task-step">
+            <span>{targetIndex + 1}</span>
+            {protocol.length}개 중 {targetIndex + 1}번째
+          </div>
+          <ArmGuide arm={workingArm} targetY={currentTarget.targetY} />
+        </div>
+        <div className="screen-copy task-copy">
+          <p className="eyebrow">타점 찾기 · {currentTarget.shortLabel}</p>
+          <h1>빨간 점의 위치를 찾아주세요</h1>
+          <p className="lead">{currentTarget.description}</p>
+          <div className="location-note">
+            <span className="location-note__target">여기</span>
+            <p>
+              <strong>{currentTarget.label}</strong>
+              {currentTarget.detail}
+            </p>
+          </div>
+          <div className="single-task-note">
+            <span aria-hidden="true">1</span>
+            <p>
+              지금은 <strong>위치만 찾습니다.</strong>
+              톡톡하기는 다음 화면에서 시작해요.
+            </p>
+          </div>
+          <div className="button-stack">
+            <button type="button" className="primary-button" onClick={startExercise}>
+              빨간 점 위치를 찾았어요
+              <Icon name="arrow" />
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => speak(`${currentTarget.description} ${currentTarget.detail}`)}
+            >
+              <Icon name="sound" />
+              위치를 다시 설명해 주세요
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+
+  const renderCountdown = () => (
+    <main className="screen-layout">
+      <section className="countdown-card" aria-live="assertive">
+        <div className="countdown-card__label">잠시 후 시작해요</div>
+        <div className="countdown-card__number" key={countdown}>
+          {countdown}
+        </div>
+        <h1>{countdown}초 뒤 톡톡 시작합니다</h1>
+        <p>두드릴 손을 빨간 점 가까이에 편하게 놓아 주세요.</p>
+        <div className="countdown-dots" aria-hidden="true">
+          {[3, 2, 1].map((number) => (
+            <span key={number} className={number >= countdown ? "is-filled" : ""} />
+          ))}
+        </div>
+        <button
+          type="button"
+          className="secondary-button countdown-cancel"
+          onClick={() => setScreen("target")}
+        >
+          위치를 다시 확인할게요
+        </button>
+      </section>
+    </main>
+  );
+
+  const renderExercise = () => {
+    const progress = Math.round((count / currentTarget.count) * 100);
+    return (
+      <main className="screen-layout">
+        <section className="exercise-grid">
+          <div className="exercise-visual">
+            <div className="mode-badge">
+              <span aria-hidden="true" />
+              {cameraStatus === "ready"
+                ? "카메라가 팔을 잘 보고 있어요"
+                : "체험 모드로 횟수를 자동 표시합니다"}
+            </div>
+            <ArmGuide
+              arm={workingArm}
+              targetY={currentTarget.targetY}
+              tapping={isRunning}
+              compact
+            />
+          </div>
+          <div className="exercise-panel">
+            <p className="eyebrow">{currentTarget.label}</p>
+            <h1>빨간 점을 {currentTarget.count}번 톡톡하세요</h1>
+            <div className="count-display" aria-live="polite">
+              <span>확인된 횟수</span>
+              <strong>{count}</strong>
+              <em>/ {currentTarget.count}회</em>
+            </div>
+            <div
+              className="progress-track"
+              role="progressbar"
+              aria-label="톡톡 진행률"
+              aria-valuemin={0}
+              aria-valuemax={currentTarget.count}
+              aria-valuenow={count}
+            >
+              <span style={{ width: `${progress}%` }} />
+            </div>
+            <div className={`run-status ${isRunning ? "is-running" : "is-paused"}`}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>
+                  {isRunning
+                    ? "좋아요. 편한 속도로 계속하세요"
+                    : "멈춰 있습니다. 준비되면 계속하세요"}
+                </strong>
+                <small>
+                  {isRunning ? `${progress}% 진행했어요` : "횟수는 그대로 저장되어 있어요"}
+                </small>
+              </span>
+            </div>
+            <div className="button-stack">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setIsRunning((previous) => !previous)}
+              >
+                <Icon name={isRunning ? "pause" : "play"} />
+                {isRunning ? "잠깐 멈추기" : "계속하기"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => speak()}
+              >
+                <Icon name="sound" />
+                설명을 다시 들을게요
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  };
+
+  const renderComplete = () => {
+    const hasNext = targetIndex < protocol.length - 1;
+    return (
+      <main className="screen-layout">
+        <section className="complete-card">
+          <div className="celebration" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+            <div className="complete-check"><Icon name="check" size={58} /></div>
+          </div>
+          <p className="eyebrow">{currentTarget.label} 완료</p>
+          <h1>{currentTarget.count}회를 모두 확인했어요</h1>
+          <p className="lead">
+            서두르지 않아도 괜찮아요. 숨을 한 번 고르고 다음을 직접 골라 주세요.
+          </p>
+          <div className="complete-summary">
+            <div>
+              <span>완료 횟수</span>
+              <strong>{count} / {currentTarget.count}회</strong>
+            </div>
+            <div>
+              <span>연습한 팔</span>
+              <strong>{sideName(workingArm)}</strong>
+            </div>
+          </div>
+          <div className="button-stack button-stack--complete">
+            <button type="button" className="primary-button" onClick={nextStage}>
+              {hasNext ? "다음 타점으로 가기" : "오늘 연습 마치기"}
+              <Icon name="arrow" />
+            </button>
+            <button type="button" className="secondary-button" onClick={repeatStage}>
+              <Icon name="repeat" />
+              이 단계 다시 하기
+            </button>
+          </div>
+          <p className="no-auto-note">
+            자동으로 넘어가지 않아요. 준비되었을 때 버튼을 눌러 주세요.
+          </p>
+        </section>
+      </main>
+    );
+  };
+
+  const renderFinished = () => (
+    <main className="screen-layout">
+      <section className="finished-card">
+        <div className="finished-illustration" aria-hidden="true">
+          <span className="sun-ray sun-ray--1" />
+          <span className="sun-ray sun-ray--2" />
+          <span className="sun-ray sun-ray--3" />
+          <span className="sun-ray sun-ray--4" />
+          <div className="finished-face">⌣</div>
+          <div className="finished-hand finished-hand--left">♡</div>
+          <div className="finished-hand finished-hand--right">♡</div>
+        </div>
+        <p className="eyebrow">오늘의 연습 완료</p>
+        <h1>
+          천천히, 아주 잘
+          <br />
+          따라오셨어요
+        </h1>
+        <p className="lead">
+          {sideName(workingArm)}의 연습 타점 {protocol.length}곳을 모두 마쳤습니다.
+          잠시 팔의 힘을 빼고 편하게 쉬어 주세요.
+        </p>
+        <div className="finished-stages" aria-label="완료한 연습">
+          {protocol.map((item) => (
+            <span key={item.id}>
+              <Icon name="check" size={20} />
+              {item.shortLabel} {item.count}회
+            </span>
+          ))}
+        </div>
+        <button type="button" className="primary-button" onClick={resetApp}>
+          <Icon name="repeat" />
+          처음부터 다시 체험하기
+        </button>
+      </section>
+    </main>
+  );
+
+  return (
+    <div
+      className={`app-shell ${largeText ? "large-text" : ""} ${
+        reducedMotion ? "reduced-motion" : ""
+      }`}
+    >
+      <a className="skip-link" href="#main-content">본문으로 바로가기</a>
+      <div id="main-content" tabIndex={-1}>
+        <ProgressHeader screen={screen} onHelp={() => setHelpOpen(true)} />
+        {screen === "welcome" && renderWelcome()}
+        {screen === "setup" && renderSetup()}
+        {screen === "camera" && renderCamera()}
+        {screen === "target" && renderTarget()}
+        {screen === "countdown" && renderCountdown()}
+        {screen === "exercise" && renderExercise()}
+        {screen === "complete" && renderComplete()}
+        {screen === "finished" && renderFinished()}
+      </div>
+      <AppFooter />
+      <HelpPanel
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onSpeak={() => speak()}
+        largeText={largeText}
+        onToggleText={() => setLargeText((previous) => !previous)}
+        onHome={resetApp}
+      />
+      <div className="sr-only" role="status" aria-live="polite">
+        {speechMessage}
+      </div>
+    </div>
+  );
+}
